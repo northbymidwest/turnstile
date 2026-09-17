@@ -111,7 +111,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - run: cargo test --workspace
 
@@ -172,7 +172,7 @@ jobs:
           spctl -a -vv -t exec "$mount/Turnstile.app"
           lipo -info "$mount/Turnstile.app/Contents/MacOS/turnstile" | grep -q 'x86_64 arm64'
 
-      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: Turnstile-${{ inputs.version }}
           path: ${{ steps.dmg.outputs.path }}
