@@ -1,0 +1,12 @@
+# Kept on deliberately. The bug form asks for a version and a log, which is
+# right for a bug and wrong for a question about how something is meant to
+# work, or a request to support another game.
+blank_issues_enabled: true
+
+contact_links:
+  - name: OpenRCT2 itself
+    url: https://github.com/OpenRCT2/OpenRCT2/issues
+    about: Problems with the game rather than the launcher belong upstream.
+  - name: OpenLoco itself
+    url: https://github.com/OpenLoco/OpenLoco/issues
+    about: Same, for OpenLoco.

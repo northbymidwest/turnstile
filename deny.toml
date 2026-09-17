@@ -1,0 +1,42 @@
+# `cargo deny check licenses bans sources`, in CI's `deny` job. Advisories are
+# `audit.yml`, which files an issue; this is the policy the tree has to satisfy
+# on every push.
+
+[graph]
+all-features = false
+
+# Nothing copyleft enters the tree. Turnstile is MIT and ships as a signed
+# binary, so a dependency under a reciprocal license would be a real problem
+# for anyone redistributing it, and the time to find out is here rather than
+# from a downstream complaint.
+#
+# Every entry is a license actually resolved in the current tree, checked with
+# `cargo metadata` rather than guessed. CDLA-Permissive-2.0 is webpki-roots'
+# certificate data, BSD-3-Clause is `instant`, and Unicode-3.0 arrives with
+# `icu` through rustls.
+[licenses]
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "ISC",
+  "Zlib",
+  "BSD-3-Clause",
+  "Unicode-3.0",
+  "CDLA-Permissive-2.0",
+  "Unlicense",
+]
+unused-allowed-license = "deny"
+# The workspace's own crates are unpublished and carry the workspace license.
+private = { ignore = true }
+
+[bans]
+# Two versions of one crate in a tree this size is a floor that drifted.
+multiple-versions = "deny"
+wildcards = "deny"
+# turnstile depends on turnstile-core by path, with no version.
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

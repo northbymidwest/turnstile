@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- The hub, drawn as an explicit annulus: an outer circle at r=99 and an
+       inner at r=37, combined with fill-rule evenodd so the inner disc is a
+       hole. The document's background fill shows through it, which is why the
+       hub stays correct under every appearance instead of being painted one
+       fixed colour.
+
+       This was a stroked circle with fill="none", which is the obvious way to
+       draw a ring and renders correctly in Icon Composer and ictool. Do not go
+       back to it: actool's SVG rasteriser ignores fill="none" on a closed path
+       and fills it, so the compiled AppIcon.icns had a solid hub while
+       Assets.car had an open one. The two renderers genuinely disagree, and
+       only actool's output ships to anyone on macOS 11 through 25.
+
+       The spokes and barriers still use strokes with fill="none" and are fine,
+       because they are open paths where a spurious fill encloses no area.
+
+       Its own layer, in front of the spokes: Icon Composer lights each layer
+       individually, and that is what gives the hub an edge against the arms
+       rather than melting into them.
+
+       Note the layers array in icon.json is ordered FRONT to BACK, like a
+       layers panel, not painter's order. Listing the hub last puts it behind
+       the spokes, whose ends then cut across the ring and break the circle. -->
+  <path fill="#ffffff" fill-rule="evenodd"
+        d="M413,553 a99,99 0 1,0 198,0 a99,99 0 1,0 -198,0 Z
+           M475,553 a37,37 0 1,0 74,0 a37,37 0 1,0 -74,0 Z"/>
+</svg>

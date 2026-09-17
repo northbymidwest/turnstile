@@ -1,0 +1,22 @@
+[workspace]
+members = ["crates/core", "crates/app"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+license = "0BSD"
+
+[workspace.dependencies]
+turnstile-core = { path = "crates/core" }
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+time = { version = "0.3", features = ["parsing", "formatting", "macros"] }
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-app-kit = "0.3"
+dispatch2 = "0.3"
+block2 = "0.6"

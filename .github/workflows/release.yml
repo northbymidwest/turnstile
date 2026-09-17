@@ -1,0 +1,221 @@
+name: release
+run-name: release ${{ inputs.version }}${{ inputs.dry_run && ' (dry run)' || (inputs.draft && ' (draft)' || '') }}
+
+# Builds a universal bundle, signs it with the Developer ID certificate,
+# notarizes and staples the disk image, and publishes it on the GitHub release
+# page. Nothing is published to a registry:
+# both crates are `publish = false`, because this is an application and the
+# deliverable is the signed .app inside a .dmg.
+#
+# The shared steps live in northbymidwest/gh-actions, pinned by commit like any
+# other action, so the recipe is in one place rather than copied into every
+# repository that ships a Mac app.
+#
+# The tag is an output of a release that succeeded, never its trigger. A tag
+# that exists for a build which failed to notarize is worse than no tag.
+#
+# A draft release, which is the default, takes that further: GitHub does not
+# create the tag for a draft at all, only when it is published. So a draft run
+# leaves nothing permanent behind, and the artifact can be downloaded from the
+# draft and checked on a real machine before anything is public. Publishing the
+# draft in the web interface is what creates the tag.
+#
+# macOS throughout, and not incidentally: codesign, actool and notarytool only
+# exist there, and actool ships with Xcode rather than the Command Line Tools.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release, without the leading v (e.g. 0.1.0)'
+        type: string
+        required: true
+      dry_run:
+        description: 'Build, sign and package, but notarize and publish nothing'
+        type: boolean
+        required: true
+        default: true
+      draft:
+        description: 'Create the release as a draft, to review before it is public'
+        type: boolean
+        required: true
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  # Every check, with no write scope and no access to the signing secrets, so
+  # the approver on the job below is looking at a green preflight and its
+  # summary rather than approving blind. Nothing here can change anything.
+  preflight:
+    runs-on: ubuntu-latest
+    # Must exceed release-preflight's ci-wait-minutes (30).
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: pre
+        uses: northbymidwest/gh-actions/release-preflight@6810abb8737e13317983f1d3dd56abc6e6e0bad7 # v0.5.1
+        with:
+          version: ${{ inputs.version }}
+          dry-run: ${{ inputs.dry_run }}
+          # No crates: that input means crates being published to crates.io,
+          # and asserts publish = false has been removed. Both of these stay
+          # publish = false on purpose, because the deliverable is the
+          # application. manifests is the version check without that
+          # assertion, which is the half that applies here: the version is
+          # stated on the dispatch and again in Cargo.toml, and if they
+          # disagree the artifact and the tag disagree.
+          crates: ""
+          manifests: Cargo.toml
+          # A draft holds its tag name without creating the tag, so the tag
+          # check alone would let a second run leave two drafts for one
+          # version, and drafts are the default here.
+          refuse-existing-release: "true"
+          token: ${{ github.token }}
+      - uses: northbymidwest/gh-actions/release-review-summary@6810abb8737e13317983f1d3dd56abc6e6e0bad7 # v0.5.1
+        with:
+          version: ${{ inputs.version }}
+          dry-run: ${{ inputs.dry_run }}
+          tag: ${{ steps.pre.outputs.tag }}
+          what-approving-does: >-
+            signs and notarizes Turnstile ${{ inputs.version }} and
+            ${{ inputs.draft && 'creates a draft release' || 'publishes the release' }}
+          token: ${{ github.token }}
+
+  release:
+    needs: preflight
+    runs-on: macos-latest
+    timeout-minutes: 90
+    # A protected environment is the approval gate, and the only place the
+    # signing and notary secrets are reachable from. It sits after preflight
+    # so approving means approving a release that has already passed its
+    # checks.
+    environment: release
+    permissions:
+      # To create the release and push the tag.
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+
+      - run: cargo test --workspace
+
+      - id: signing
+        uses: northbymidwest/gh-actions/macos-signing-keychain@6810abb8737e13317983f1d3dd56abc6e6e0bad7 # v0.5.1
+        with:
+          certificate: ${{ secrets.MACOS_CERT_P12 }}
+          password: ${{ secrets.MACOS_CERT_PASSWORD }}
+
+      # The identity comes from the certificate that was just imported rather
+      # than from a secret restating it, so the two cannot disagree.
+      - name: Build the bundle
+        env:
+          SIGN_IDENTITY: ${{ steps.signing.outputs.identity }}
+        run: ./scripts/bundle.sh
+
+      - id: dmg
+        uses: northbymidwest/gh-actions/macos-dmg@6810abb8737e13317983f1d3dd56abc6e6e0bad7 # v0.5.1
+        with:
+          app: dist/Turnstile.app
+          output: Turnstile-${{ inputs.version }}.dmg
+          volume-name: Turnstile
+          # Positions the application first and the drop target second.
+          # Generated by scripts/make-dmg-layout.sh on a Mac with a Finder.
+          ds-store: resources/dmg-DS_Store
+          identity: ${{ steps.signing.outputs.identity }}
+
+      # One submission, not two. The notary service scans inside the image, so
+      # the ticket it returns covers the application as well; verified by
+      # stapling a loose copy that had never been submitted on its own, which
+      # succeeded. The application inside the image is left unstapled, which
+      # costs an offline first launch after somebody drags it out, and nothing
+      # else: Gatekeeper reports it as Notarized Developer ID on any machine
+      # that can reach Apple. Stapling it too would mean rebuilding the image
+      # afterwards, and the rebuilt image's own ticket would no longer match.
+      - uses: northbymidwest/gh-actions/macos-notarize@6810abb8737e13317983f1d3dd56abc6e6e0bad7 # v0.5.1
+        with:
+          path: ${{ steps.dmg.outputs.path }}
+          key: ${{ secrets.NOTARY_KEY_P8 }}
+          key-id: ${{ secrets.NOTARY_KEY_ID }}
+          issuer: ${{ secrets.NOTARY_ISSUER_ID }}
+          dry-run: ${{ inputs.dry_run }}
+
+      # What the release page will claim about the artifact, asserted rather
+      # than assumed, and asserted on the image a person actually downloads.
+      - name: Verify the image
+        if: ${{ !inputs.dry_run }}
+        env:
+          DMG: ${{ steps.dmg.outputs.path }}
+        run: |
+          set -euo pipefail
+          spctl -a -vv -t open --context context:primary-signature "$DMG"
+          xcrun stapler validate "$DMG"
+          mount=$(hdiutil attach "$DMG" -nobrowse -readonly | tail -1 | sed 's/.*\(\/Volumes\/.*\)/\1/')
+          trap 'hdiutil detach "$mount" -quiet || true' EXIT
+          # Gatekeeper, not stapler: the application inside is deliberately
+          # unstapled, and is assessed against Apple's records instead.
+          spctl -a -vv -t exec "$mount/Turnstile.app"
+          lipo -info "$mount/Turnstile.app/Contents/MacOS/turnstile" | grep -q 'x86_64 arm64'
+
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: Turnstile-${{ inputs.version }}
+          path: ${{ steps.dmg.outputs.path }}
+
+      # Everything above runs on a dry run too, apart from the notarization
+      # round trips, so the only thing a dry run leaves untested is the
+      # publish itself.
+      - name: Publish the release
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WANT: ${{ inputs.version }}
+          DMG: ${{ steps.dmg.outputs.path }}
+          SHA256: ${{ steps.dmg.outputs.sha256 }}
+          DRAFT: ${{ inputs.draft }}
+        run: |
+          set -euo pipefail
+          {
+            printf '%s\n\n' 'A universal macOS build, signed with a Developer ID certificate and notarized by Apple, so it opens without a Gatekeeper warning. Open the disk image and drag Turnstile to Applications.'
+            printf '%s\n\n' 'Requires macOS 11 or later. On macOS 26 and later the app carries its Liquid Glass icon.'
+            printf 'SHA-256 of `%s`:\n\n```\n%s\n```\n' "$DMG" "$SHA256"
+          } > notes.md
+          # An array rather than an interpolated string: an empty flag inside
+          # quotes becomes an empty argument, which gh reads as a positional.
+          flags=()
+          if [ "$DRAFT" = "true" ]; then flags+=(--draft); fi
+          gh release create "v$WANT" \
+            --title "Turnstile $WANT" \
+            --notes-file notes.md \
+            --target "$GITHUB_SHA" \
+            "${flags[@]}" \
+            "$DMG"
+          if [ "$DRAFT" = "true" ]; then
+            echo "::notice::created a DRAFT release for v$WANT. No tag exists yet; publishing the draft creates it."
+          else
+            echo "::notice::published v$WANT"
+          fi
+
+      # Always, and by name: leaving a certificate and its private key in a
+      # keychain on a runner is the one failure here with consequences past
+      # this job.
+      - if: always()
+        uses: northbymidwest/gh-actions/macos-signing-keychain@6810abb8737e13317983f1d3dd56abc6e6e0bad7 # v0.5.1
+        with:
+          remove: "true"
+          keychain-path: ${{ steps.signing.outputs.keychain-path }}

@@ -1,0 +1,118 @@
+{
+  "color-space-for-untagged-svg-colors": "display-p3",
+  "fill-specializations": [
+    {
+      "value": {
+        "linear-gradient": [
+          "extended-srgb:0.41176,0.43922,0.86667,1.00000",
+          "extended-srgb:0.14510,0.16471,0.38824,1.00000"
+        ],
+        "orientation": {
+          "start": {
+            "x": 0.5,
+            "y": 0.0
+          },
+          "stop": {
+            "x": 0.5,
+            "y": 1.0
+          }
+        }
+      }
+    },
+    {
+      "appearance": "dark",
+      "value": {
+        "linear-gradient": [
+          "extended-srgb:0.29020,0.31765,0.76863,1.00000",
+          "extended-srgb:0.07059,0.07843,0.18431,1.00000"
+        ],
+        "orientation": {
+          "start": {
+            "x": 0.5,
+            "y": 0.0
+          },
+          "stop": {
+            "x": 0.5,
+            "y": 1.0
+          }
+        }
+      }
+    }
+  ],
+  "groups": [
+    {
+      "blur-material": 0.5,
+      "layers": [
+        {
+          "fill-specializations": [
+            {
+              "value": {
+                "solid": "extended-srgb:0.92941,0.92549,0.98431,1.00000"
+              }
+            },
+            {
+              "appearance": "dark",
+              "value": {
+                "solid": "extended-srgb:0.67843,0.66667,0.82353,1.00000"
+              }
+            }
+          ],
+          "glass": true,
+          "image-name": "hub.svg",
+          "name": "Hub"
+        },
+        {
+          "fill-specializations": [
+            {
+              "value": {
+                "solid": "extended-srgb:0.92941,0.92549,0.98431,1.00000"
+              }
+            },
+            {
+              "appearance": "dark",
+              "value": {
+                "solid": "extended-srgb:0.67843,0.66667,0.82353,1.00000"
+              }
+            }
+          ],
+          "glass": true,
+          "image-name": "spokes.svg",
+          "name": "Spokes"
+        },
+        {
+          "fill-specializations": [
+            {
+              "value": {
+                "solid": "extended-srgb:0.92941,0.92549,0.98431,1.00000"
+              }
+            },
+            {
+              "appearance": "dark",
+              "value": {
+                "solid": "extended-srgb:0.67843,0.66667,0.82353,1.00000"
+              }
+            }
+          ],
+          "glass": true,
+          "image-name": "barriers.svg",
+          "name": "Barriers",
+          "opacity": 0.5
+        }
+      ],
+      "lighting": "individual",
+      "name": "Turnstile",
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.5
+      },
+      "specular": true,
+      "translucency": {
+        "enabled": false,
+        "value": 0.5
+      }
+    }
+  ],
+  "supported-platforms": {
+    "squares": "shared"
+  }
+}

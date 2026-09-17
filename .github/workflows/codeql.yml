@@ -1,0 +1,56 @@
+name: codeql
+
+# `actions` is the reason this exists: three workflows run unattended on a
+# schedule, two hold `issues: write`, and the release workflow handles a
+# signing certificate and notary credentials. The bug that matters is a
+# `${{ }}` expanded into the source of a `run:` block.
+#
+# Off the hour, and after CI's own Monday run.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '11 9 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
+    strategy:
+      # One language failing should not hide the other's result.
+      fail-fast: false
+      matrix:
+        include:
+          # Interpreted; `none` is the only build mode it has.
+          - language: actions
+            build-mode: none
+          # Also the only mode Rust has: CodeQL rejects `autobuild` for Rust.
+          # That costs some call-target resolution and produces a standing
+          # "Low Rust analysis quality" warning; it is a property of the
+          # extractor, not something configurable here.
+          - language: rust
+            build-mode: none
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: github/codeql-action/init@a35ac6e6798d72df5475948b28efb89edc2e19ca # v4.37.9
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+      - uses: github/codeql-action/analyze@a35ac6e6798d72df5475948b28efb89edc2e19ca # v4.37.9
+        with:
+          category: /language:${{ matrix.language }}

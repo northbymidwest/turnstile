@@ -1,0 +1,22 @@
+[package]
+name = "turnstile"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+# An application, not a library. Nothing here is meant for crates.io, and
+# saying so stops an accidental `cargo publish` and lets cargo-deny treat the
+# path dependency as the internal one it is.
+publish = false
+
+[[bin]]
+name = "turnstile"
+path = "src/main.rs"
+
+[dependencies]
+turnstile-core.workspace = true
+objc2.workspace = true
+objc2-foundation.workspace = true
+objc2-app-kit.workspace = true
+dispatch2.workspace = true
+block2.workspace = true

@@ -1,0 +1,20 @@
+[package]
+name = "turnstile-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+# An application, not a library. Nothing here is meant for crates.io, and
+# saying so stops an accidental `cargo publish` and lets cargo-deny treat the
+# path dependency as the internal one it is.
+publish = false
+
+[dependencies]
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+time.workspace = true
+ureq.workspace = true
+
+[lints.rust]
+unsafe_code = "forbid"

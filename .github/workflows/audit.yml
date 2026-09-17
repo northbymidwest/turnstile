@@ -1,0 +1,73 @@
+name: audit
+
+# `cargo audit` checks the resolved lockfile against the RustSec database.
+# This app makes network requests and unpacks archives it downloaded, so an
+# advisory against ureq, rustls or their transitive tree is a real concern
+# rather than a formality.
+#
+# On a push or pull request only when the manifests or the lockfile change,
+# since nothing else can alter the answer; weekly regardless, because the
+# database changes without a commit here. Off the hour, and after CI's own
+# Monday run, so a red here is never just the toolchain having moved.
+on:
+  push:
+    paths: ['Cargo.toml', 'Cargo.lock', '**/Cargo.toml']
+  pull_request:
+    paths: ['Cargo.toml', 'Cargo.lock', '**/Cargo.toml']
+  schedule:
+    - cron: '47 9 * * 1'
+  workflow_dispatch:
+
+# `issues: write` is for the reporting step: an advisory that lands on a
+# Monday and is never read about is the same as no job at all. Only the
+# unattended runs file anything; a push or pull request has a red check that
+# somebody is already looking at.
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'schedule' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.event_name != 'schedule' }}
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
+      - uses: taiki-e/install-action@37f7c5781271959fb65b6b35224e28652ff2b63d # v2.87.0
+        with:
+          tool: cargo-audit@0.22.2
+      - id: audit
+        run: |
+          set -o pipefail
+          cargo audit --color never 2>&1 | tee audit.log
+      # Only for an advisory. A database that would not download, or a runner
+      # that died, is not a finding about this tree.
+      - name: File the advisory
+        if: failure() && steps.audit.outcome == 'failure' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          {
+            printf '%s\n\n' 'cargo audit found an advisory against the resolved dependency tree.'
+            printf 'Run: %s\n\n' "$RUN"
+            printf '```\n'
+            cat audit.log
+            printf '```\n'
+          } > body.md
+          existing=$(gh issue list --state open --label audit --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file body.md
+          else
+            gh issue create --title 'audit: an advisory against a dependency' \
+              --label audit --body-file body.md
+          fi

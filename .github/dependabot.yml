@@ -1,0 +1,55 @@
+# Monthly, and only the GitHub Actions the workflows pin.
+#
+# The point is not freshness but the upgrades that arrive as deadlines: a
+# runner's Node version reaching end of life takes unattended workflows down
+# with it. Every action is pinned to a commit, with the tag in a comment, so
+# this is also the only thing that ever moves one of those pins.
+#
+# `dtolnay/rust-toolchain` is pinned like the others and chooses the compiler
+# through its `toolchain:` input, never through the ref, so a bump here moves
+# the action and not the toolchain. The `msrv` job reads its version from
+# `Cargo.toml`, which is not a dependency this file can see.
+#
+# `northbymidwest/gh-actions` is this owner's own repository and carries the
+# release machinery. It is bumped here like any other action, which is the
+# point of pinning it by commit rather than by a tag somebody can move.
+#
+# A week's cooldown on both: a release is not offered until it has been out
+# that long, which is the window in which a compromised or broken release
+# tends to be noticed and pulled. Security updates ignore the cooldown.
+#
+# The `cargo` ecosystem is on for advisories only. The versions in
+# `Cargo.toml` are floors, the minimum each package actually needs, and
+# raising a floor because a newer version exists is the opposite of what those
+# numbers mean; `open-pull-requests-limit: 0` turns version updates off. A
+# floor with a security advisory against it is the one case where raising it
+# is right, and that is what still opens a pull request. `audit.yml` is the
+# same check from the other side, against the lockfile every run resolves.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "ci"
+    labels: []
+    # One PR for all action bumps, so multi-`uses:` actions (codeql-action's
+    # init and analyze, the gh-actions composites) move together rather than in
+    # separate, version-mismatched pull requests.
+    groups:
+      actions:
+        patterns:
+          - "*"
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 0
+    commit-message:
+      prefix: "deps"
+    labels: []

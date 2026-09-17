@@ -1,0 +1,71 @@
+name: Bug report
+description: Something the launcher got wrong
+labels: ["bug"]
+assignees: ["northbymidwest"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Two things make a report actionable: what the launcher did with your
+        installation, and enough about the machine to reproduce it. This app
+        writes into the directory holding your saved games, so anything that
+        looks like data loss is worth reporting even if you are unsure.
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of problem
+      options:
+        - It will not download or install a build
+        - It installed something but will not launch it
+        - A version went missing, or the wrong one was removed
+        - Switching between versions went wrong
+        - The interface showed something incorrect
+        - Something else
+    validations:
+      required: true
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Turnstile version
+      description: The version in the About panel, or the release you downloaded.
+    validations:
+      required: true
+
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version and Mac
+      description: "For example: macOS 26.1 on an M2 MacBook Air."
+    validations:
+      required: true
+
+  - type: dropdown
+    id: multiversion
+    attributes:
+      label: Was "keep multiple versions installed" turned on
+      options:
+        - "No, the default"
+        - "Yes"
+        - "I had just turned it on or off"
+    validations:
+      required: true
+
+  - type: textarea
+    id: layout
+    attributes:
+      label: What the install directory looks like
+      description: >-
+        Helpful for anything involving installing, launching or switching.
+        Run this and paste the output:
+        `ls -la ~/Library/Application\ Support/OpenRCT2`
+      render: shell

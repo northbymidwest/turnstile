@@ -1,0 +1,155 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Nothing here is pinned to this repository's own activity: `stable` moves
+  # every six weeks, and the macOS runner image and its Xcode move on their own
+  # schedule. Since this project builds a signed bundle against AppKit and
+  # actool, a runner image change can break it with no commit here. Once a
+  # week, unprompted, is the point.
+  #
+  # Off the hour: scheduled jobs queue behind everyone else's :00 cron.
+  schedule:
+    - cron: '31 6 * * 1'
+  workflow_dispatch:
+
+# No job here writes anything back.
+permissions:
+  contents: read
+
+# A second push to the same branch makes the first run's answer irrelevant.
+# Not on main, though: the badge and the history should say something about
+# every commit that lands there.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  # macOS only, and not as a simplification: the app crate is AppKit through
+  # objc2, and turnstile-core's paths and its use of `ditto` are macOS
+  # specific. A Linux job would either fail to build or assert nothing.
+  test:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+      - run: cargo test --workspace
+
+  # The floor in Cargo.toml, read from the manifest rather than written twice.
+  msrv:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: floor
+        run: |
+          v=$(sed -n 's/^rust-version = "\([0-9.]*\)"$/\1/p' Cargo.toml)
+          [ -n "$v" ] || { echo 'no rust-version in Cargo.toml' >&2; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: ${{ steps.floor.outputs.version }}
+      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+      - run: cargo test --workspace
+
+  lint:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      # Private items too: most of this codebase is internal, and a broken
+      # intra-doc link in it is invisible to a public-only build.
+      - run: cargo doc --workspace --no-deps --document-private-items
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  # The packaging script is as much a deliverable as the binary, and it is the
+  # only place actool, lipo and codesign are exercised. Unsigned here by
+  # design: no certificate is available to a pull request, and bundle.sh falls
+  # back to an ad-hoc signature, which still proves the pipeline runs.
+  bundle:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+      - run: ./scripts/bundle.sh
+      # Assert what the bundle has to contain, rather than trusting that a
+      # zero exit means the right thing was produced. Each of these has been
+      # wrong at some point during development.
+      - name: Check the bundle
+        run: |
+          set -euo pipefail
+          app=dist/Turnstile.app
+          lipo -info "$app/Contents/MacOS/turnstile" | grep -q 'x86_64 arm64'
+          codesign --verify --deep --strict "$app"
+          test -f "$app/Contents/Resources/Assets.car"
+          test -f "$app/Contents/Resources/AppIcon.icns"
+          n=$(find "$app/Contents/Resources" -maxdepth 1 -name '*.lproj' | wc -l | tr -d ' ')
+          [ "$n" = 9 ] || { echo "expected 9 .lproj, found $n" >&2; exit 1; }
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$app/Contents/Info.plist"
+
+  deny:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@37f7c5781271959fb65b6b35224e28652ff2b63d # v2.87.0
+        with:
+          tool: cargo-deny@0.18.5
+      - run: cargo deny check licenses bans sources
+
+  workflows:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      # SC2016 is "expressions don't expand in single quotes": the release notes
+      # and the issue body quote markdown code fences in single quotes on
+      # purpose, and a backtick there is not a command substitution.
+      - run: ./scripts/check-ascii.sh
+      - run: actionlint
+        env:
+          SHELLCHECK_OPTS: -e SC2016
+      - name: shellcheck
+        run: shellcheck -x scripts/*.sh .githooks/pre-commit
+      - uses: zizmorcore/zizmor-action@3dc1ecc9bcb9e94e9b2c709687979e1298497054 # v0.6.2
+        with:
+          version: 1.29.0
+          inputs: .github
+          advanced-security: true
