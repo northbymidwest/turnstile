@@ -1,7 +1,7 @@
 #!/bin/bash
 # Sets the two signing secrets on the release environment from a .p12 export.
 #
-#   ./scripts/set-signing-secrets.sh [path/to/cert.p12]
+#   ./scripts/set-signing-secrets.sh path/to/cert.p12
 #
 # Everything is checked locally before anything is uploaded: that the password
 # opens the file, that it holds a Developer ID Application certificate, and
@@ -13,7 +13,10 @@
 # file, never put on the clipboard, and the password is never echoed.
 set -euo pipefail
 
-P12="${1:-${HOME}/Documents/Certificates.p12}"
+# No default. The path is always given explicitly: this uploads a private key,
+# and guessing which file that is from a conventional location is the wrong
+# kind of convenience.
+P12="${1:?usage: set-signing-secrets.sh path/to/cert.p12}"
 REPO="${REPO:-northbymidwest/turnstile}"
 ENVIRONMENT="${ENVIRONMENT:-release}"
 

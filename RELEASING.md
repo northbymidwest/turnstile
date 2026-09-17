@@ -85,8 +85,11 @@ graphical export, because releasing the private key needs you to authorise it.
 Then run, which sets both secrets:
 
 ```
-./scripts/set-signing-secrets.sh ~/Documents/Certificates.p12
+./scripts/set-signing-secrets.sh path/to/Certificates.p12
 ```
+
+The path is always given explicitly; the script has no default, because guessing which
+file holds a private key is the wrong kind of convenience.
 
 It checks locally that the password opens the file, that the file really holds a
 `Developer ID Application` certificate rather than some other one, and that the
