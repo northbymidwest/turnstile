@@ -75,7 +75,8 @@ mod tests {
     use std::process::Command;
 
     fn scratch(name: &str) -> std::path::PathBuf {
-        let p = std::env::temp_dir().join(format!("turnstile-extract-{name}"));
+        let p =
+            std::env::temp_dir().join(format!("turnstile-extract-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).unwrap();
         p

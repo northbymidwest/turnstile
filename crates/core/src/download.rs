@@ -132,8 +132,17 @@ mod tests {
         url
     }
 
-    fn tempdir() -> std::path::PathBuf {
-        let p = std::env::temp_dir().join(format!("turnstile-dl-{}", std::process::id()));
+    /// A directory per test, not per process.
+    ///
+    /// These tests run in parallel in one process, and this clears the
+    /// directory before using it, so a shared one meant that whichever test
+    /// called this second deleted the file the first was about to read. It
+    /// survived on a machine with enough cores to start every test at once,
+    /// where all the calls land before any download finishes, and failed on a
+    /// CI runner with fewer, where a later test starts while an earlier one is
+    /// still going. `--test-threads=2` reproduces it on any machine.
+    fn tempdir(name: &str) -> std::path::PathBuf {
+        let p = std::env::temp_dir().join(format!("turnstile-dl-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).unwrap();
         p
@@ -143,7 +152,7 @@ mod tests {
     fn a_file_is_downloaded_byte_for_byte() {
         let body = vec![7u8; 5000];
         let url = serve(body.clone(), true);
-        let dest = tempdir().join("out.bin");
+        let dest = tempdir("byte-for-byte").join("out.bin");
         let cancel = AtomicBool::new(false);
         download_to_temp(&url, &dest, &mut |_| {}, &cancel).unwrap();
         assert_eq!(std::fs::read(&dest).unwrap(), body);
@@ -152,7 +161,7 @@ mod tests {
     #[test]
     fn progress_reaches_one_when_content_length_is_known() {
         let url = serve(vec![0u8; 5000], true);
-        let dest = tempdir().join("out2.bin");
+        let dest = tempdir("progress-known").join("out2.bin");
         let cancel = AtomicBool::new(false);
         let mut seen: Vec<Option<f64>> = Vec::new();
         download_to_temp(&url, &dest, &mut |p| seen.push(p.value), &cancel).unwrap();
@@ -167,7 +176,7 @@ mod tests {
     #[test]
     fn progress_is_indeterminate_when_content_length_is_absent() {
         let url = serve(vec![0u8; 2000], false);
-        let dest = tempdir().join("out3.bin");
+        let dest = tempdir("progress-unknown").join("out3.bin");
         let cancel = AtomicBool::new(false);
         let mut seen: Vec<Option<f64>> = Vec::new();
         download_to_temp(&url, &dest, &mut |p| seen.push(p.value), &cancel).unwrap();
@@ -180,7 +189,7 @@ mod tests {
     #[test]
     fn cancellation_stops_the_download_and_removes_the_partial_file() {
         let url = serve(vec![0u8; 5_000_000], true);
-        let dest = tempdir().join("out4.bin");
+        let dest = tempdir("cancel").join("out4.bin");
         let cancel = AtomicBool::new(true); // cancelled before the first chunk
         let err = download_to_temp(&url, &dest, &mut |_| {}, &cancel).unwrap_err();
         assert!(matches!(err, CoreError::Cancelled));
@@ -193,7 +202,7 @@ mod tests {
     #[test]
     fn the_status_is_always_downloading_from_this_function() {
         let url = serve(vec![0u8; 100], true);
-        let dest = tempdir().join("out5.bin");
+        let dest = tempdir("http-error").join("out5.bin");
         let cancel = AtomicBool::new(false);
         let mut statuses = Vec::new();
         download_to_temp(&url, &dest, &mut |p| statuses.push(p.status), &cancel).unwrap();
