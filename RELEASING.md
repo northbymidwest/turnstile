@@ -113,8 +113,23 @@ An App Store Connect API key, not an Apple ID and app-specific password. A key b
 to the team rather than to a person, can be revoked on its own, and does not break when
 somebody enables two-factor or leaves.
 
-Create one under Users and Access, Integrations, in App Store Connect, with the
-Developer role. The `.p8` downloads once and cannot be downloaded again.
+In App Store Connect, Users and Access, the Integrations tab, App Store Connect API,
+Team Keys. Generate a key with the **Developer** role, which is all notarization needs.
+Creating one requires Account Holder or Admin.
+
+The `.p8` downloads exactly once and cannot be retrieved again. Keep it somewhere safe;
+if it is lost, revoke the key and make another.
+
+Then run, which sets all three:
+
+```
+./scripts/set-notary-secrets.sh path/to/AuthKey_XXXXXXXXXX.p8
+```
+
+It offers the key ID read out of the filename, asks for the issuer ID, and then tries
+the credentials against Apple before uploading anything. A key that is wrong, revoked,
+or lacking the role otherwise surfaces several minutes into a release, after a universal
+build and a disk image have already been made.
 
 | Secret | What it holds |
 |---|---|
