@@ -78,9 +78,26 @@ lives.
 A `Developer ID Application` certificate, exported from Keychain Access as a `.p12`
 with a password.
 
+Export it from Keychain Access: My Certificates, right click the
+`Developer ID Application` entry, Export, as a `.p12` with a password. It has to be the
+graphical export, because releasing the private key needs you to authorise it.
+
+Then run, which sets both secrets:
+
+```
+./scripts/set-signing-secrets.sh ~/Documents/Certificates.p12
+```
+
+It checks locally that the password opens the file, that the file really holds a
+`Developer ID Application` certificate rather than some other one, and that the
+certificate has not expired, before anything is uploaded. A wrong password otherwise
+surfaces several minutes into a release, in a job that has already imported a keychain.
+The encoded certificate is piped straight to `gh`: never written to a file, never put on
+the clipboard, and the password is never echoed.
+
 | Secret | What it holds |
 |---|---|
-| `MACOS_CERT_P12` | the `.p12`, base64 encoded: `base64 -i cert.p12 \| pbcopy` |
+| `MACOS_CERT_P12` | the `.p12`, base64 encoded |
 | `MACOS_CERT_PASSWORD` | the password set when exporting it |
 
 There is deliberately no secret naming the signing identity. `macos-signing-keychain`
