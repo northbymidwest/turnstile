@@ -13,6 +13,7 @@
 //! discarded. That is what stops switching games mid-fetch from populating
 //! the list with the other game's releases.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use turnstile_core::age::Age;
@@ -104,6 +105,17 @@ pub struct UiState {
     /// `active_entry`, the one place that knows which of the two this is.
     pub active: Option<String>,
     pub releases: Vec<ReleaseRow>,
+    /// Releases already fetched, so switching games does not ask GitHub
+    /// again. Keyed on both things that decide what a fetch returns: the
+    /// game, and whether development builds were included, since that second
+    /// one changes which repositories are queried rather than merely
+    /// filtering the result.
+    ///
+    /// Never invalidated. The unauthenticated API allows sixty requests an
+    /// hour and bouncing between two games spent one each time; a launcher is
+    /// open for a minute, so a release appearing mid-session is not worth a
+    /// request per switch. Quitting and reopening refetches.
+    release_cache: HashMap<(GameId, bool), Vec<ReleaseRow>>,
     pub selected_release: usize,
     pub show_develop: bool,
     /// Auto-update is a **per-game** preference (`autoInstallUpdates.
@@ -166,6 +178,7 @@ impl UiState {
             selected_installed: 0,
             active: None,
             releases: Vec::new(),
+            release_cache: HashMap::new(),
             selected_release: 0,
             show_develop: false,
             auto_update: [false; GameId::ALL.len()],
@@ -402,7 +415,7 @@ pub fn reduce(state: &mut UiState, msg: Msg) -> Vec<Effect> {
             state.active = None;
             state.selected_installed = 0;
             state.selected_release = 0;
-            vec![
+            let mut effects = vec![
                 Effect::CancelInFlight {
                     generation: cancelled,
                 },
@@ -411,12 +424,19 @@ pub fn reduce(state: &mut UiState, msg: Msg) -> Vec<Effect> {
                     generation: state.generation,
                     game,
                 },
-                Effect::FetchReleases {
+            ];
+            // Switching back to a game already looked at asks GitHub nothing.
+            // Through `adopt_releases` rather than by assigning, so a cache
+            // hit still evaluates auto-update.
+            match cached(state, game, state.show_develop) {
+                Some(rows) => effects.extend(adopt_releases(state, rows)),
+                None => effects.push(Effect::FetchReleases {
                     generation: state.generation,
                     game,
                     include_develop: state.show_develop,
-                },
-            ]
+                }),
+            }
+            effects
         }
 
         Msg::SelectInstalled(index) => {
@@ -463,17 +483,25 @@ pub fn reduce(state: &mut UiState, msg: Msg) -> Vec<Effect> {
         Msg::ToggleDevelop(on) => {
             let cancelled = bump_generation(state);
             state.show_develop = on;
-            vec![
+            let mut effects = vec![
                 Effect::CancelInFlight {
                     generation: cancelled,
                 },
                 Effect::SavePref(Pref::ShowDevelop(on)),
-                Effect::FetchReleases {
+            ];
+            // Cached per channel choice as well as per game, because turning
+            // development builds on queries a second repository rather than
+            // filtering what the first returned. So each of the two states is
+            // fetched once and then toggling between them is free.
+            match cached(state, state.selected_game, on) {
+                Some(rows) => effects.extend(adopt_releases(state, rows)),
+                None => effects.push(Effect::FetchReleases {
                     generation: state.generation,
                     game: state.selected_game,
                     include_develop: on,
-                },
-            ]
+                }),
+            }
+            effects
         }
 
         Msg::ToggleAutoUpdate(on) => {
@@ -694,34 +722,10 @@ pub fn reduce(state: &mut UiState, msg: Msg) -> Vec<Effect> {
             }
             match result {
                 Ok(rows) => {
-                    state.releases = rows;
-                    state.selected_release = 0;
-                    // `auto_update()` resolves against `state.selected_game`,
-                    // so this can only ever act on the setting stored for the
-                    // game whose releases these are.
-                    //
-                    // No `is_busy()` guard, unlike the arms a user drives.
-                    // This is not a click to be distrusted, and refusing it
-                    // would simply mean auto-update quietly not updating for
-                    // the rest of the session, since nothing re-runs it.
-                    // `outstanding` is a count precisely so a second
-                    // operation overlapping a first is accounted for rather
-                    // than losing one of the two clears. The only operation
-                    // that can be in flight here is an `Activate` from the
-                    // installed popup: `download_enabled` is false while
-                    // auto-update is on, so no manual install can be running,
-                    // and every other initiator bumps the generation, which
-                    // makes this reply stale before it arrives.
-                    if state.auto_update()
-                        && let Some(tag) = newest_installable(state)
-                    {
-                        begin(state, 1);
-                        return vec![Effect::Install {
-                            generation: state.generation,
-                            game: state.selected_game,
-                            tag,
-                        }];
-                    }
+                    state
+                        .release_cache
+                        .insert((state.selected_game, state.show_develop), rows.clone());
+                    return adopt_releases(state, rows);
                 }
                 Err(message) => {
                     state.error = Some(Alert {
@@ -1056,6 +1060,44 @@ fn switch_target(state: &UiState, name: &str) -> Option<String> {
         .map(|i| i.name.clone())
 }
 
+/// Takes a set of releases as the current ones, from a fetch or from the
+/// cache, and returns whatever that implies.
+///
+/// Both paths go through here on purpose. Auto-update is evaluated when
+/// releases arrive, so a cache hit that merely assigned `state.releases`
+/// would silently stop auto-update from ever firing on a game switch: two
+/// correct-looking rules composing into a gap neither owns.
+fn adopt_releases(state: &mut UiState, rows: Vec<ReleaseRow>) -> Vec<Effect> {
+    state.releases = rows;
+    state.selected_release = 0;
+    // `auto_update()` resolves against `state.selected_game`, so this can
+    // only ever act on the setting stored for the game whose releases these
+    // are.
+    //
+    // No `is_busy()` guard, unlike the arms a user drives. This is not a
+    // click to be distrusted, and refusing it would mean auto-update quietly
+    // not updating for the rest of the session, since nothing re-runs it.
+    // `outstanding` is a count precisely so a second operation overlapping a
+    // first is accounted for rather than losing one of the two clears.
+    if state.auto_update()
+        && let Some(tag) = newest_installable(state)
+    {
+        begin(state, 1);
+        return vec![Effect::Install {
+            generation: state.generation,
+            game: state.selected_game,
+            tag,
+        }];
+    }
+    Vec::new()
+}
+
+/// The releases for a game and channel choice if they have been fetched
+/// already, so the caller can skip the request.
+fn cached(state: &UiState, game: GameId, include_develop: bool) -> Option<Vec<ReleaseRow>> {
+    state.release_cache.get(&(game, include_develop)).cloned()
+}
+
 /// The newest listed release's tag, unless it is already the one active.
 /// Compares the release's tag against the *tag* of whichever installed
 /// entry currently matches `active`, rather than comparing the release tag
@@ -1095,6 +1137,114 @@ mod tests {
             dir: std::path::PathBuf::from(format!("/tmp/{name}")),
             can_launch,
         }
+    }
+
+    fn rows(tags: &[&str]) -> Vec<ReleaseRow> {
+        tags.iter()
+            .map(|t| ReleaseRow {
+                tag: (*t).into(),
+                age: None,
+                channel: Channel::Release,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn switching_back_to_a_game_already_fetched_asks_github_nothing() {
+        let mut s = UiState::new(GameId::OpenRCT2);
+        // Arriving releases are what fills the cache.
+        let g = s.generation;
+        reduce(
+            &mut s,
+            Msg::ReleasesLoaded {
+                generation: g,
+                result: Ok(rows(&["v3", "v2"])),
+            },
+        );
+        let away = reduce(&mut s, Msg::SelectGame(GameId::OpenLoco));
+        assert!(
+            away.iter()
+                .any(|e| matches!(e, Effect::FetchReleases { .. })),
+            "the other game has never been fetched, so it must be"
+        );
+        let back = reduce(&mut s, Msg::SelectGame(GameId::OpenRCT2));
+        assert!(
+            !back.iter()
+                .any(|e| matches!(e, Effect::FetchReleases { .. })),
+            "returning to a game already fetched must not ask again"
+        );
+        assert_eq!(
+            s.releases.iter().map(|r| r.tag.as_str()).collect::<Vec<_>>(),
+            vec!["v3", "v2"],
+            "and the cached releases must actually be restored"
+        );
+    }
+
+    #[test]
+    fn a_cache_hit_still_evaluates_auto_update() {
+        // The trap this guards: auto-update is evaluated when releases
+        // arrive, so serving them from the cache without going through the
+        // same path would stop it firing on a game switch. Both paths run
+        // through `adopt_releases` for exactly this reason.
+        let mut s = UiState::new(GameId::OpenRCT2);
+        s.set_auto_update(GameId::OpenRCT2, true);
+        s.installed = vec![installed("v2", true)];
+        s.active = Some("v2".into());
+        let g = s.generation;
+        reduce(
+            &mut s,
+            Msg::ReleasesLoaded {
+                generation: g,
+                result: Ok(rows(&["v3", "v2"])),
+            },
+        );
+        reduce(&mut s, Msg::SelectGame(GameId::OpenLoco));
+        let back = reduce(&mut s, Msg::SelectGame(GameId::OpenRCT2));
+        assert!(
+            back.iter()
+                .any(|e| matches!(e, Effect::Install { tag, .. } if tag == "v3")),
+            "a cache hit must still install the newer build when auto-update is on"
+        );
+    }
+
+    #[test]
+    fn the_cache_is_keyed_on_the_channel_choice_too() {
+        // Turning development builds on queries a second repository rather
+        // than filtering the first, so a cache keyed on the game alone would
+        // serve release-only rows as though they included development ones.
+        let mut s = UiState::new(GameId::OpenRCT2);
+        let g = s.generation;
+        reduce(
+            &mut s,
+            Msg::ReleasesLoaded {
+                generation: g,
+                result: Ok(rows(&["v3"])),
+            },
+        );
+        let on = reduce(&mut s, Msg::ToggleDevelop(true));
+        assert!(
+            on.iter().any(|e| matches!(e, Effect::FetchReleases { .. })),
+            "the develop channel has not been fetched, so it must be"
+        );
+        let g = s.generation;
+        reduce(
+            &mut s,
+            Msg::ReleasesLoaded {
+                generation: g,
+                result: Ok(rows(&["v4-dev", "v3"])),
+            },
+        );
+        let off = reduce(&mut s, Msg::ToggleDevelop(false));
+        assert!(
+            !off.iter()
+                .any(|e| matches!(e, Effect::FetchReleases { .. })),
+            "both channel states have now been fetched, so toggling is free"
+        );
+        assert_eq!(
+            s.releases.iter().map(|r| r.tag.as_str()).collect::<Vec<_>>(),
+            vec!["v3"],
+            "and turning it off restores the release-only rows"
+        );
     }
 
     fn ready_state() -> UiState {
