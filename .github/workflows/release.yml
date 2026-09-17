@@ -63,7 +63,7 @@ jobs:
         with:
           persist-credentials: false
       - id: pre
-        uses: northbymidwest/gh-actions/release-preflight@6810abb8737e13317983f1d3dd56abc6e6e0bad7 # v0.5.1
+        uses: northbymidwest/gh-actions/release-preflight@010696da1a1dc686d7931c4aab81f8bb02721613 # v0.5.2
         with:
           version: ${{ inputs.version }}
           dry-run: ${{ inputs.dry_run }}
@@ -81,7 +81,7 @@ jobs:
           # version, and drafts are the default here.
           refuse-existing-release: "true"
           token: ${{ github.token }}
-      - uses: northbymidwest/gh-actions/release-review-summary@6810abb8737e13317983f1d3dd56abc6e6e0bad7 # v0.5.1
+      - uses: northbymidwest/gh-actions/release-review-summary@010696da1a1dc686d7931c4aab81f8bb02721613 # v0.5.2
         with:
           version: ${{ inputs.version }}
           dry-run: ${{ inputs.dry_run }}
@@ -116,7 +116,7 @@ jobs:
       - run: cargo test --workspace
 
       - id: signing
-        uses: northbymidwest/gh-actions/macos-signing-keychain@6810abb8737e13317983f1d3dd56abc6e6e0bad7 # v0.5.1
+        uses: northbymidwest/gh-actions/macos-signing-keychain@010696da1a1dc686d7931c4aab81f8bb02721613 # v0.5.2
         with:
           certificate: ${{ secrets.MACOS_CERT_P12 }}
           password: ${{ secrets.MACOS_CERT_PASSWORD }}
@@ -129,7 +129,7 @@ jobs:
         run: ./scripts/bundle.sh
 
       - id: dmg
-        uses: northbymidwest/gh-actions/macos-dmg@6810abb8737e13317983f1d3dd56abc6e6e0bad7 # v0.5.1
+        uses: northbymidwest/gh-actions/macos-dmg@010696da1a1dc686d7931c4aab81f8bb02721613 # v0.5.2
         with:
           app: dist/Turnstile.app
           output: Turnstile-${{ inputs.version }}.dmg
@@ -147,7 +147,8 @@ jobs:
       # else: Gatekeeper reports it as Notarized Developer ID on any machine
       # that can reach Apple. Stapling it too would mean rebuilding the image
       # afterwards, and the rebuilt image's own ticket would no longer match.
-      - uses: northbymidwest/gh-actions/macos-notarize@6810abb8737e13317983f1d3dd56abc6e6e0bad7 # v0.5.1
+      - id: notarized
+        uses: northbymidwest/gh-actions/macos-notarize@010696da1a1dc686d7931c4aab81f8bb02721613 # v0.5.2
         with:
           path: ${{ steps.dmg.outputs.path }}
           key: ${{ secrets.NOTARY_KEY_P8 }}
@@ -186,7 +187,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           WANT: ${{ inputs.version }}
           DMG: ${{ steps.dmg.outputs.path }}
-          SHA256: ${{ steps.dmg.outputs.sha256 }}
+          SHA256: ${{ steps.notarized.outputs.sha256 }}
           DRAFT: ${{ inputs.draft }}
         run: |
           set -euo pipefail
@@ -215,7 +216,7 @@ jobs:
       # keychain on a runner is the one failure here with consequences past
       # this job.
       - if: always()
-        uses: northbymidwest/gh-actions/macos-signing-keychain@6810abb8737e13317983f1d3dd56abc6e6e0bad7 # v0.5.1
+        uses: northbymidwest/gh-actions/macos-signing-keychain@010696da1a1dc686d7931c4aab81f8bb02721613 # v0.5.2
         with:
           remove: "true"
           keychain-path: ${{ steps.signing.outputs.keychain-path }}
