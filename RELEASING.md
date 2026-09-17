@@ -82,9 +82,10 @@ with a password.
 |---|---|
 | `MACOS_CERT_P12` | the `.p12`, base64 encoded: `base64 -i cert.p12 \| pbcopy` |
 | `MACOS_CERT_PASSWORD` | the password set when exporting it |
-| `MACOS_SIGN_IDENTITY` | the identity's full name, e.g. `Developer ID Application: Your Name (TEAMID1234)` |
 
-`security find-identity -v -p codesigning` prints the exact identity string.
+There is deliberately no secret naming the signing identity. `macos-signing-keychain`
+reads it out of the certificate after importing it and returns it as an output, so the
+identity and the certificate cannot disagree.
 
 ### Notarization
 
