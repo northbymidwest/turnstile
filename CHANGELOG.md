@@ -21,6 +21,7 @@ First release.
 - Nine languages, imported from upstream OpenLauncher's resources at a pinned commit,
   with the strings Turnstile adds translated alongside them.
 - Universal binary, signed with a Developer ID certificate and notarized, so it opens
-  without a Gatekeeper warning. The bundle carries both licenses: Turnstile's own 0BSD
-  and OpenLauncher's MIT, which covers the icons and translations it borrows. Requires macOS 11 or later; on macOS 26 and later it
+  without a Gatekeeper warning. Requires macOS 11 or later; on macOS 26 and later it
   carries a Liquid Glass icon.
+- The bundle carries both licenses: Turnstile's own 0BSD, and OpenLauncher's MIT, which
+  covers the icons and translations borrowed from it.

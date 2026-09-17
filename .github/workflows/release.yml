@@ -191,10 +191,12 @@ jobs:
           DRAFT: ${{ inputs.draft }}
         run: |
           set -euo pipefail
+          # The changelog section for this version, then the checksum.
+          # preflight already refused the release if that section is missing or
+          # empty, so awk cannot come up blank here.
           {
-            printf '%s\n\n' 'A universal macOS build, signed with a Developer ID certificate and notarized by Apple, so it opens without a Gatekeeper warning. Open the disk image and drag Turnstile to Applications.'
-            printf '%s\n\n' 'Requires macOS 11 or later. On macOS 26 and later the app carries its Liquid Glass icon.'
-            printf 'SHA-256 of `%s`:\n\n```\n%s\n```\n' "$DMG" "$SHA256"
+            awk -v v="$WANT" 'index($0, "## " v " ") == 1 { f = 1; next } /^## / { f = 0 } f' CHANGELOG.md
+            printf '\nSHA-256 of `%s`:\n\n```\n%s\n```\n' "$(basename "$DMG")" "$SHA256"
           } > notes.md
           # An array rather than an interpolated string: an empty flag inside
           # quotes becomes an empty argument, which gh reads as a positional.
