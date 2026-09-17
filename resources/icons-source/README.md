@@ -23,5 +23,5 @@ for n in icon-openrct2 icon-openloco; do
 done
 ```
 
-Upstream is MIT licensed; see `LICENSE-openlauncher` for the attribution these icons
+Upstream is MIT licensed; see `LICENSE-OpenLauncher` for the attribution these icons
 carry. They are not covered by this repository's 0BSD license.

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Regenerates resources/<lang>.lproj/Localizable.strings from upstream
-# OpenLauncher's .resx resources. Upstream is MIT licensed (LICENSE-openlauncher),
+# OpenLauncher's .resx resources. Upstream is MIT licensed (LICENSE-OpenLauncher),
 # and the imported translations stay under it rather than this repository's 0BSD;
 # the translations
 # are carried over verbatim, including their {0} placeholder syntax, so future

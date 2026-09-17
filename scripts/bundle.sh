@@ -97,7 +97,7 @@ cp resources/icon-openrct2.png resources/icon-openloco.png "$APP/Contents/Resour
 # in all copies, and a .app handed to somebody is a copy. Turnstile's own
 # license goes in beside it so the bundle says what it is on its own terms.
 cp LICENSE "$APP/Contents/Resources/LICENSE"
-cp LICENSE-openlauncher "$APP/Contents/Resources/LICENSE-openlauncher"
+cp LICENSE-OpenLauncher "$APP/Contents/Resources/LICENSE-OpenLauncher"
 for lproj in resources/*.lproj; do
   cp -R "$lproj" "$APP/Contents/Resources/"
 done

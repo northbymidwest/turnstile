@@ -95,7 +95,7 @@ your own discretion.
 Two things here are not covered by the license above. They come from
 [OpenLauncher](https://github.com/OpenRCT2/OpenLauncher), Copyright (c) 2022
 Ted John, and remain under its MIT license, which is reproduced in
-[LICENSE-openlauncher](LICENSE-openlauncher):
+[LICENSE-OpenLauncher](LICENSE-OpenLauncher):
 
 - The game icons, `resources/icon-openrct2.png` and `resources/icon-openloco.png`,
   and their originals under `resources/icons-source/`.
