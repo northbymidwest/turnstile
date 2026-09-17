@@ -4,8 +4,11 @@
 "AvailableLabel" = "사용 가능:";
 "BuildListing" = "{0} ({1} 출시)";
 "Cancel" = "취소";
+"CheckForUpdates" = "실행 시 업데이트 확인";
+"CheckForUpdatesDetail" = "새 버전의 Turnstile이 출시되었는지 GitHub에 물어봅니다. 아무것도 다운로드하거나 설치하지 않습니다.";
 "Day" = "1일 전";
 "Days" = "{0}일 전";
+"Dismiss" = "숨기기";
 "Download" = "다운로드";
 "DownloadBuildFailedTitle" = "빌드 다운로드에 실패하였습니다";
 "FailedToChangeVersionMode" = "버전 저장 방식을 변경하지 못했습니다";
@@ -33,9 +36,12 @@
 "RemoveBusyMessage" = "다른 작업이 진행 중이어서 아무것도 제거되지 않았습니다. 완료된 후에 다시 시도하세요.";
 "RemoveConfirmMessage" = "설치된 버전을 디스크에서 삭제합니다. 저장된 게임, 시나리오, 설정은 영향을 받지 않습니다.";
 "RemoveConfirmTitle" = "{0}을(를) 삭제할까요?";
+"Settings" = "설정";
 "ShowDevelopmentVersions" = "사전 공개 버전 보기";
 "StatusDownloading" = "다운로드 중…";
 "StatusExtracting" = "압축 푸는 중…";
 "Unknown" = "(알 수 없음)";
+"Update" = "업데이트";
+"UpdateAvailable" = "Turnstile {0}을(를) 사용할 수 있습니다.";
 "Year" = "1년 전";
 "Years" = "{0}년 전";

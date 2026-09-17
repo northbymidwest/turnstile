@@ -91,6 +91,13 @@ impl GitHub {
 
     /// The only place `ureq` is touched. If the 3.x surface differs from
     /// what is written here, this function is the only thing that changes.
+    /// A GET against the public API, shared with `selfupdate`, which asks a
+    /// different question of the same host and wants the same rate-limit and
+    /// error handling.
+    pub(crate) fn get_public(&self, url: &str) -> Result<String, CoreError> {
+        self.get(url)
+    }
+
     fn get(&self, url: &str) -> Result<String, CoreError> {
         let mut response = ureq::get(url)
             .header("User-Agent", USER_AGENT)

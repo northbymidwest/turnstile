@@ -12,6 +12,7 @@ pub mod game;
 pub mod github;
 pub mod install;
 pub mod release;
+pub mod selfupdate;
 pub mod store;
 
 pub use age::{Age, now};

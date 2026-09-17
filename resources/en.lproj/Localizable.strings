@@ -4,8 +4,11 @@
 "AvailableLabel" = "Available:";
 "BuildListing" = "{0} (released {1})";
 "Cancel" = "Cancel";
+"CheckForUpdates" = "Check for updates on launch";
+"CheckForUpdatesDetail" = "Asks GitHub whether a newer Turnstile has been released. Nothing is downloaded or installed.";
 "Day" = "a day ago";
 "Days" = "{0} days ago";
+"Dismiss" = "Dismiss";
 "Download" = "Download";
 "DownloadBuildFailedTitle" = "Failed to download build";
 "FailedToChangeVersionMode" = "Failed to change how versions are stored";
@@ -33,9 +36,12 @@
 "RemoveBusyMessage" = "Other work was in progress, so nothing was removed. Try again once it has finished.";
 "RemoveConfirmMessage" = "This deletes the installed build from disk. Saved games, scenarios, and settings are not affected.";
 "RemoveConfirmTitle" = "Remove {0}?";
+"Settings" = "Settings";
 "ShowDevelopmentVersions" = "Show development versions";
 "StatusDownloading" = "Downloading…";
 "StatusExtracting" = "Extracting…";
 "Unknown" = "(Unknown)";
+"Update" = "Update";
+"UpdateAvailable" = "Turnstile {0} is available.";
 "Year" = "a year ago";
 "Years" = "{0} years ago";

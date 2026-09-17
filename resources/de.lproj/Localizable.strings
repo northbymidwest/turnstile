@@ -4,8 +4,11 @@
 "AvailableLabel" = "Verfügbar:";
 "BuildListing" = "{0} (veröffentlicht {1})";
 "Cancel" = "Abbrechen";
+"CheckForUpdates" = "Beim Start nach Updates suchen";
+"CheckForUpdatesDetail" = "Fragt GitHub, ob eine neuere Version von Turnstile veroeffentlicht wurde. Es wird nichts heruntergeladen oder installiert.";
 "Day" = "vor einem Tag";
 "Days" = "vor {0} Tagen";
+"Dismiss" = "Ausblenden";
 "Download" = "Download";
 "DownloadBuildFailedTitle" = "Spielversion konnte nicht heruntergeladen werden.";
 "FailedToChangeVersionMode" = "Speicherart der Versionen konnte nicht geändert werden";
@@ -33,9 +36,12 @@
 "RemoveBusyMessage" = "Andere Vorgänge liefen noch, daher wurde nichts entfernt. Versuche es erneut, sobald sie abgeschlossen sind.";
 "RemoveConfirmMessage" = "Dies löscht den installierten Build von der Festplatte. Spielstände, Szenarien und Einstellungen sind nicht betroffen.";
 "RemoveConfirmTitle" = "{0} entfernen?";
+"Settings" = "Einstellungen";
 "ShowDevelopmentVersions" = "Zeige Vorab-Versionen";
 "StatusDownloading" = "Wird heruntergeladen…";
 "StatusExtracting" = "Wird entpackt…";
 "Unknown" = "(Unbekannt)";
+"Update" = "Update";
+"UpdateAvailable" = "Turnstile {0} ist verfuegbar.";
 "Year" = "vor einem Jahr";
 "Years" = "vor {0} Jahren";

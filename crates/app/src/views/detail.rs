@@ -10,9 +10,8 @@ use objc2::runtime::AnyObject;
 use objc2::{MainThreadMarker, sel};
 use objc2_app_kit::{
     NSButton, NSColor, NSFont, NSFontWeightSemibold, NSLayoutConstraintOrientation,
-    NSLayoutPriorityDefaultLow, NSLineBreakMode, NSPopUpButton, NSProgressIndicator,
-    NSProgressIndicatorStyle, NSStackView, NSTextField, NSUserInterfaceLayoutOrientation, NSView,
-    NSViewController,
+    NSLayoutPriorityDefaultLow, NSPopUpButton, NSProgressIndicator, NSProgressIndicatorStyle,
+    NSStackView, NSTextField, NSUserInterfaceLayoutOrientation, NSView, NSViewController,
 };
 use objc2_foundation::{NSEdgeInsets, NSString, ns_string};
 
@@ -31,7 +30,6 @@ pub struct Detail {
     pub progress: Retained<NSProgressIndicator>,
     pub develop_check: Retained<NSButton>,
     pub auto_update_check: Retained<NSButton>,
-    pub multi_version_check: Retained<NSButton>,
     pub title_label: Retained<NSTextField>,
     pub version_label: Retained<NSTextField>,
 }
@@ -193,35 +191,6 @@ pub fn build(mtm: MainThreadMarker, actions: &Actions) -> (Retained<NSViewContro
     };
     root.addArrangedSubview(&auto_update_check);
 
-    // SAFETY: `target` outlives `multi_version_check`, and
-    // `multiVersionToggled:` is a real selector `Actions` defines below.
-    let multi_version_check = unsafe {
-        NSButton::checkboxWithTitle_target_action(
-            &NSString::from_str(&strings::get("KeepMultipleVersions")),
-            Some(target),
-            Some(sel!(multiVersionToggled:)),
-            mtm,
-        )
-    };
-    // "Changes how builds are stored on disk" is not guessable from the
-    // checkbox's own label, so it gets a line of its own underneath.
-    let multi_version_detail =
-        small_secondary_label(mtm, &strings::get("KeepMultipleVersionsDetail"));
-    // `maximumNumberOfLines(0)` alone does not wrap: `labelWithString`'s
-    // default line-break mode is truncating, which just lets a single line
-    // run past the window's edge instead. Word-wrapping is what actually
-    // turns that into multiple lines within `preferredMaxLayoutWidth`.
-    multi_version_detail.setLineBreakMode(NSLineBreakMode::ByWordWrapping);
-    multi_version_detail.setMaximumNumberOfLines(0);
-    multi_version_detail.setPreferredMaxLayoutWidth(420.0);
-
-    let multi_version_column = NSStackView::new(mtm);
-    multi_version_column.setOrientation(NSUserInterfaceLayoutOrientation::Vertical);
-    multi_version_column.setSpacing(2.0);
-    multi_version_column.addArrangedSubview(&multi_version_check);
-    multi_version_column.addArrangedSubview(&multi_version_detail);
-    root.addArrangedSubview(&multi_version_column);
-
     let controller = NSViewController::new(mtm);
     controller.setView(&root);
 
@@ -236,7 +205,6 @@ pub fn build(mtm: MainThreadMarker, actions: &Actions) -> (Retained<NSViewContro
             progress,
             develop_check,
             auto_update_check,
-            multi_version_check,
             title_label,
             version_label,
         },
@@ -263,7 +231,7 @@ fn secondary(field: &NSTextField) {
 /// `InstalledLabel` and `AvailableLabel` are both this: a small caption
 /// above the row it introduces, styled to read as secondary rather than
 /// as a field label demanding equal weight with the controls below it.
-fn small_secondary_label(mtm: MainThreadMarker, text: &str) -> Retained<NSTextField> {
+pub(crate) fn small_secondary_label(mtm: MainThreadMarker, text: &str) -> Retained<NSTextField> {
     let field = label(mtm, text);
     field.setFont(Some(&NSFont::systemFontOfSize(
         NSFont::smallSystemFontSize(),

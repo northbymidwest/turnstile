@@ -4,8 +4,11 @@
 "AvailableLabel" = "Elérhető:";
 "BuildListing" = "{0} ({1} adták ki)";
 "Cancel" = "Mégse";
+"CheckForUpdates" = "Frissitesek keresese indulaskor";
+"CheckForUpdatesDetail" = "Megkerdezi a GitHubot, hogy megjelent-e ujabb Turnstile. Semmi nem toltodik le es nem telepul.";
 "Day" = "egy napja";
 "Days" = "{0} napja";
+"Dismiss" = "Elrejtes";
 "Download" = "Letöltés";
 "DownloadBuildFailedTitle" = "Nem sikerült letölteni a kiadást";
 "FailedToChangeVersionMode" = "Nem sikerült módosítani a verziók tárolási módját";
@@ -33,9 +36,12 @@
 "RemoveBusyMessage" = "Más műveletek voltak folyamatban, ezért semmi nem lett eltávolítva. Próbáld újra, amint befejeződtek.";
 "RemoveConfirmMessage" = "Ez törli a telepített verziót a lemezről. A mentett játékok, forgatókönyvek és beállítások nem sérülnek.";
 "RemoveConfirmTitle" = "Eltávolítod a(z) {0} verziót?";
+"Settings" = "Beallitasok";
 "ShowDevelopmentVersions" = "Fejlesztői verziók megjelenítése";
 "StatusDownloading" = "Letöltés…";
 "StatusExtracting" = "Kitömörítés…";
 "Unknown" = "(Ismeretlen)";
+"Update" = "Frissítés";
+"UpdateAvailable" = "A Turnstile {0} elerheto.";
 "Year" = "egy éve";
 "Years" = "{0} éve";

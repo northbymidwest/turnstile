@@ -84,6 +84,7 @@ pub struct Alert {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pref {
+    CheckForUpdates(bool),
     ShowDevelop(bool),
     AutoUpdate(bool),
     MultiVersion(bool),
@@ -118,6 +119,13 @@ pub struct UiState {
     release_cache: HashMap<(GameId, bool), Vec<ReleaseRow>>,
     pub selected_release: usize,
     pub show_develop: bool,
+    /// Whether to ask GitHub for a newer Turnstile at startup.
+    pub check_for_updates: bool,
+    /// The newer release, once one has been found and not yet dismissed.
+    /// `None` covers both "up to date" and "the check has not answered",
+    /// which the interface does not need to tell apart: neither shows a
+    /// banner.
+    pub update: Option<turnstile_core::selfupdate::Update>,
     /// Auto-update is a **per-game** preference (`autoInstallUpdates.
     /// <gameKey>`, see `prefs.rs`), so the in-memory mirror is per game
     /// too, one slot per `GameId::index`. It was a single game-less `bool`
@@ -181,6 +189,11 @@ impl UiState {
             release_cache: HashMap::new(),
             selected_release: 0,
             show_develop: false,
+            // Defaults on. Somebody running an old build with a fixed bug in
+            // it is the case this exists for, and they are exactly the person
+            // who will not go looking for the setting.
+            check_for_updates: true,
+            update: None,
             auto_update: [false; GameId::ALL.len()],
             multi_version: false,
             busy: None,
@@ -277,6 +290,20 @@ impl UiState {
 #[derive(Debug)]
 pub enum Msg {
     SelectGame(GameId),
+    /// The answer to `Effect::CheckForUpdate`. `Ok(None)` means up to date.
+    ///
+    /// No error case. A failed check produces nothing: no network, a rate
+    /// limit, a malformed reply, all mean the banner does not appear. An
+    /// update notice that can raise an error is a worse application than one
+    /// that occasionally fails to notice.
+    UpdateChecked(Option<turnstile_core::selfupdate::Update>),
+    /// The user dismissed the banner, or followed it.
+    DismissUpdate,
+    OpenUpdatePage,
+    ToggleCheckForUpdates(bool),
+    /// Open the Settings window. Nothing to reduce: the window is a view, and
+    /// `views::apply` already keeps its checkboxes in step with state.
+    ShowSettings,
     SelectInstalled(usize),
     SelectRelease(usize),
     ToggleDevelop(bool),
@@ -330,6 +357,20 @@ pub enum Msg {
 
 #[derive(Debug)]
 pub enum Effect {
+    /// Ask whether a newer Turnstile has been published.
+    ///
+    /// No generation, unlike every other network effect here. Those answer a
+    /// question about the selected game, so switching games makes the reply
+    /// meaningless; this one is about the application, and nothing the user
+    /// does while it is in flight can make the answer wrong.
+    CheckForUpdate,
+    /// Bring the Settings window forward. A view concern rather than state:
+    /// there is one window, built at startup, and this shows it.
+    ShowSettings,
+    /// Open a URL in the browser. The update banner is the only thing that
+    /// wants it: replacing a running, notarized bundle in place is a
+    /// different feature with real ways to leave somebody with no app.
+    OpenUrl(String),
     LoadInstalled {
         generation: u64,
         game: GameId,
@@ -478,6 +519,44 @@ pub fn reduce(state: &mut UiState, msg: Msg) -> Vec<Effect> {
         Msg::SelectRelease(index) => {
             state.selected_release = index;
             Vec::new()
+        }
+
+        Msg::UpdateChecked(found) => {
+            // Only when the check is still wanted: the setting can be turned
+            // off while the request is in flight, and a banner arriving after
+            // that would be the setting failing to mean anything.
+            if state.check_for_updates {
+                state.update = found;
+            }
+            Vec::new()
+        }
+
+        Msg::DismissUpdate => {
+            state.update = None;
+            Vec::new()
+        }
+
+        Msg::OpenUpdatePage => {
+            // Taken before clearing, and the banner goes either way: somebody
+            // who has opened the page has been told.
+            let effects = match &state.update {
+                Some(update) => vec![Effect::OpenUrl(update.url.clone())],
+                None => Vec::new(),
+            };
+            state.update = None;
+            effects
+        }
+
+        Msg::ShowSettings => vec![Effect::ShowSettings],
+
+        Msg::ToggleCheckForUpdates(on) => {
+            state.check_for_updates = on;
+            // Turning it off takes down a banner already showing. Leaving one
+            // up would be the setting not applying to what is on screen.
+            if !on {
+                state.update = None;
+            }
+            vec![Effect::SavePref(Pref::CheckForUpdates(on))]
         }
 
         Msg::ToggleDevelop(on) => {
@@ -1139,6 +1218,90 @@ mod tests {
         }
     }
 
+    fn an_update(version: &str) -> turnstile_core::selfupdate::Update {
+        turnstile_core::selfupdate::Update {
+            version: version.into(),
+            url: format!("https://example.invalid/{version}"),
+        }
+    }
+
+    #[test]
+    fn a_found_update_shows_and_dismissing_clears_it() {
+        let mut s = UiState::new(GameId::OpenRCT2);
+        reduce(&mut s, Msg::UpdateChecked(Some(an_update("0.2.0"))));
+        assert_eq!(s.update.as_ref().map(|u| u.version.as_str()), Some("0.2.0"));
+        reduce(&mut s, Msg::DismissUpdate);
+        assert!(s.update.is_none());
+    }
+
+    #[test]
+    fn a_check_that_answers_after_the_setting_was_turned_off_shows_nothing() {
+        // The request is already in flight when the checkbox is unticked.
+        // A banner arriving after that would be the setting not meaning
+        // anything.
+        let mut s = UiState::new(GameId::OpenRCT2);
+        reduce(&mut s, Msg::ToggleCheckForUpdates(false));
+        reduce(&mut s, Msg::UpdateChecked(Some(an_update("0.2.0"))));
+        assert!(s.update.is_none());
+    }
+
+    #[test]
+    fn turning_the_setting_off_takes_down_a_banner_already_showing() {
+        let mut s = UiState::new(GameId::OpenRCT2);
+        reduce(&mut s, Msg::UpdateChecked(Some(an_update("0.2.0"))));
+        assert!(s.update.is_some());
+        reduce(&mut s, Msg::ToggleCheckForUpdates(false));
+        assert!(
+            s.update.is_none(),
+            "the setting must apply to what is on screen"
+        );
+    }
+
+    #[test]
+    fn opening_the_page_asks_for_that_url_and_clears_the_banner() {
+        let mut s = UiState::new(GameId::OpenRCT2);
+        reduce(&mut s, Msg::UpdateChecked(Some(an_update("0.2.0"))));
+        let effects = reduce(&mut s, Msg::OpenUpdatePage);
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::OpenUrl(u) if u == "https://example.invalid/0.2.0")),
+            "the url must come from the update that was found"
+        );
+        assert!(
+            s.update.is_none(),
+            "somebody who opened the page has been told"
+        );
+    }
+
+    #[test]
+    fn opening_the_page_with_no_update_does_nothing() {
+        let mut s = UiState::new(GameId::OpenRCT2);
+        assert!(reduce(&mut s, Msg::OpenUpdatePage).is_empty());
+    }
+
+    #[test]
+    fn the_setting_is_persisted_whichever_way_it_moves() {
+        let mut s = UiState::new(GameId::OpenRCT2);
+        for on in [false, true] {
+            let effects = reduce(&mut s, Msg::ToggleCheckForUpdates(on));
+            assert!(
+                effects
+                    .iter()
+                    .any(|e| matches!(e, Effect::SavePref(Pref::CheckForUpdates(v)) if *v == on)),
+                "toggling to {on} must be saved"
+            );
+        }
+    }
+
+    #[test]
+    fn checking_for_updates_defaults_on() {
+        // Somebody running an old build with a fixed bug in it is the case
+        // this exists for, and they are exactly the person who will not go
+        // looking for the setting.
+        assert!(UiState::new(GameId::OpenRCT2).check_for_updates);
+    }
+
     fn rows(tags: &[&str]) -> Vec<ReleaseRow> {
         tags.iter()
             .map(|t| ReleaseRow {
@@ -1169,12 +1332,16 @@ mod tests {
         );
         let back = reduce(&mut s, Msg::SelectGame(GameId::OpenRCT2));
         assert!(
-            !back.iter()
+            !back
+                .iter()
                 .any(|e| matches!(e, Effect::FetchReleases { .. })),
             "returning to a game already fetched must not ask again"
         );
         assert_eq!(
-            s.releases.iter().map(|r| r.tag.as_str()).collect::<Vec<_>>(),
+            s.releases
+                .iter()
+                .map(|r| r.tag.as_str())
+                .collect::<Vec<_>>(),
             vec!["v3", "v2"],
             "and the cached releases must actually be restored"
         );
@@ -1241,7 +1408,10 @@ mod tests {
             "both channel states have now been fetched, so toggling is free"
         );
         assert_eq!(
-            s.releases.iter().map(|r| r.tag.as_str()).collect::<Vec<_>>(),
+            s.releases
+                .iter()
+                .map(|r| r.tag.as_str())
+                .collect::<Vec<_>>(),
             vec!["v3"],
             "and turning it off restores the release-only rows"
         );

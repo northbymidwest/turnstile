@@ -167,6 +167,28 @@ define_class!(
             }
         }
 
+        #[unsafe(method(checkForUpdatesToggled:))]
+        fn check_for_updates_toggled(&self, sender: Option<&NSButton>) {
+            if let Some(on) = checkbox_state(sender) {
+                self.send(Msg::ToggleCheckForUpdates(on));
+            }
+        }
+
+        #[unsafe(method(openUpdatePage:))]
+        fn open_update_page(&self, _sender: Option<&NSObject>) {
+            self.send(Msg::OpenUpdatePage);
+        }
+
+        #[unsafe(method(dismissUpdate:))]
+        fn dismiss_update(&self, _sender: Option<&NSObject>) {
+            self.send(Msg::DismissUpdate);
+        }
+
+        #[unsafe(method(showSettings:))]
+        fn show_settings(&self, _sender: Option<&NSObject>) {
+            self.send(Msg::ShowSettings);
+        }
+
         #[unsafe(method(multiVersionToggled:))]
         fn multi_version_toggled(&self, sender: Option<&NSButton>) {
             if let Some(on) = checkbox_state(sender) {

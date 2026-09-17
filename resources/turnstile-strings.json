@@ -14,6 +14,9 @@
   "en": {
     "ActiveVersion": "{0} (active)",
     "Cancel": "Cancel",
+    "CheckForUpdates": "Check for updates on launch",
+    "CheckForUpdatesDetail": "Asks GitHub whether a newer Turnstile has been released. Nothing is downloaded or installed.",
+    "Dismiss": "Dismiss",
     "FailedToChangeVersionMode": "Failed to change how versions are stored",
     "FailedToObtainBuilds": "Failed to obtain builds",
     "FailedToReadInstalledVersions": "Failed to read installed versions",
@@ -29,11 +32,16 @@
     "Remove": "Remove",
     "RemoveBusyMessage": "Other work was in progress, so nothing was removed. Try again once it has finished.",
     "RemoveConfirmMessage": "This deletes the installed build from disk. Saved games, scenarios, and settings are not affected.",
-    "RemoveConfirmTitle": "Remove {0}?"
+    "RemoveConfirmTitle": "Remove {0}?",
+    "Settings": "Settings",
+    "UpdateAvailable": "Turnstile {0} is available."
   },
   "de": {
     "ActiveVersion": "{0} (aktiv)",
     "Cancel": "Abbrechen",
+    "CheckForUpdates": "Beim Start nach Updates suchen",
+    "CheckForUpdatesDetail": "Fragt GitHub, ob eine neuere Version von Turnstile veroeffentlicht wurde. Es wird nichts heruntergeladen oder installiert.",
+    "Dismiss": "Ausblenden",
     "FailedToChangeVersionMode": "Speicherart der Versionen konnte nicht geändert werden",
     "FailedToObtainBuilds": "Builds konnten nicht abgerufen werden",
     "FailedToReadInstalledVersions": "Installierte Versionen konnten nicht gelesen werden",
@@ -50,12 +58,17 @@
     "RemoveBusyMessage": "Andere Vorgänge liefen noch, daher wurde nichts entfernt. Versuche es erneut, sobald sie abgeschlossen sind.",
     "RemoveConfirmMessage": "Dies löscht den installierten Build von der Festplatte. Spielstände, Szenarien und Einstellungen sind nicht betroffen.",
     "RemoveConfirmTitle": "{0} entfernen?",
+    "Settings": "Einstellungen",
     "StatusDownloading": "Wird heruntergeladen…",
-    "StatusExtracting": "Wird entpackt…"
+    "StatusExtracting": "Wird entpackt…",
+    "UpdateAvailable": "Turnstile {0} ist verfuegbar."
   },
   "fr": {
     "ActiveVersion": "{0} (active)",
     "Cancel": "Annuler",
+    "CheckForUpdates": "Rechercher les mises a jour au demarrage",
+    "CheckForUpdatesDetail": "Demande a GitHub si une version plus recente de Turnstile est parue. Rien n’est telecharge ni installe.",
+    "Dismiss": "Masquer",
     "FailedToChangeVersionMode": "Impossible de changer le mode de stockage des versions",
     "FailedToObtainBuilds": "Impossible de récupérer les versions",
     "FailedToReadInstalledVersions": "Impossible de lire les versions installées",
@@ -72,12 +85,17 @@
     "RemoveBusyMessage": "D'autres opérations étaient en cours, donc rien n'a été supprimé. Réessayez une fois qu'elles sont terminées.",
     "RemoveConfirmMessage": "Cela supprime la version installée du disque. Les parties sauvegardées, les scénarios et les réglages ne sont pas affectés.",
     "RemoveConfirmTitle": "Supprimer {0} ?",
+    "Settings": "Reglages",
     "StatusDownloading": "Téléchargement…",
-    "StatusExtracting": "Extraction…"
+    "StatusExtracting": "Extraction…",
+    "UpdateAvailable": "Turnstile {0} est disponible."
   },
   "es": {
     "ActiveVersion": "{0} (activa)",
     "Cancel": "Cancelar",
+    "CheckForUpdates": "Buscar actualizaciones al iniciar",
+    "CheckForUpdatesDetail": "Pregunta a GitHub si se ha publicado una version mas reciente de Turnstile. No se descarga ni se instala nada.",
+    "Dismiss": "Ocultar",
     "FailedToChangeVersionMode": "No se pudo cambiar cómo se almacenan las versiones",
     "FailedToObtainBuilds": "No se pudieron obtener las versiones",
     "FailedToReadInstalledVersions": "No se pudieron leer las versiones instaladas",
@@ -93,11 +111,16 @@
     "Remove": "Eliminar",
     "RemoveBusyMessage": "Había otras tareas en curso, así que no se eliminó nada. Vuelve a intentarlo cuando terminen.",
     "RemoveConfirmMessage": "Esto elimina la versión instalada del disco. Las partidas guardadas, los escenarios y los ajustes no se ven afectados.",
-    "RemoveConfirmTitle": "¿Eliminar {0}?"
+    "RemoveConfirmTitle": "¿Eliminar {0}?",
+    "Settings": "Ajustes",
+    "UpdateAvailable": "Turnstile {0} esta disponible."
   },
   "nl": {
     "ActiveVersion": "{0} (actief)",
     "Cancel": "Annuleren",
+    "CheckForUpdates": "Bij het starten op updates controleren",
+    "CheckForUpdatesDetail": "Vraagt GitHub of er een nieuwere versie van Turnstile is uitgebracht. Er wordt niets gedownload of geinstalleerd.",
+    "Dismiss": "Verbergen",
     "FailedToChangeVersionMode": "Kan opslagwijze van versies niet wijzigen",
     "FailedToObtainBuilds": "Kan versies niet ophalen",
     "FailedToReadInstalledVersions": "Kan geïnstalleerde versies niet lezen",
@@ -113,11 +136,16 @@
     "Remove": "Verwijderen",
     "RemoveBusyMessage": "Er was ander werk bezig, dus er is niets verwijderd. Probeer het opnieuw zodra dat klaar is.",
     "RemoveConfirmMessage": "Hiermee wordt de geïnstalleerde versie van schijf verwijderd. Opgeslagen spellen, scenario's en instellingen blijven behouden.",
-    "RemoveConfirmTitle": "{0} verwijderen?"
+    "RemoveConfirmTitle": "{0} verwijderen?",
+    "Settings": "Instellingen",
+    "UpdateAvailable": "Turnstile {0} is beschikbaar."
   },
   "ca": {
     "ActiveVersion": "{0} (activa)",
     "Cancel": "Cancel·la",
+    "CheckForUpdates": "Cerca actualitzacions en iniciar",
+    "CheckForUpdatesDetail": "Pregunta a GitHub si s’ha publicat una versio mes recent de Turnstile. No es baixa ni s’instal·la res.",
+    "Dismiss": "Amaga",
     "FailedToChangeVersionMode": "No s'ha pogut canviar com es desen les versions",
     "FailedToObtainBuilds": "No s'han pogut obtenir les versions",
     "FailedToReadInstalledVersions": "No s'han pogut llegir les versions instal·lades",
@@ -133,11 +161,16 @@
     "Remove": "Suprimeix",
     "RemoveBusyMessage": "Hi havia altres tasques en curs, així que no s'ha suprimit res. Torna-ho a provar quan hagin acabat.",
     "RemoveConfirmMessage": "Això suprimeix la versió instal·lada del disc. Les partides desades, els escenaris i la configuració no es veuen afectats.",
-    "RemoveConfirmTitle": "Voleu suprimir {0}?"
+    "RemoveConfirmTitle": "Voleu suprimir {0}?",
+    "Settings": "Configuracio",
+    "UpdateAvailable": "Turnstile {0} esta disponible."
   },
   "cs": {
     "ActiveVersion": "{0} (aktivní)",
     "Cancel": "Zrušit",
+    "CheckForUpdates": "Pri spusteni zkontrolovat aktualizace",
+    "CheckForUpdatesDetail": "Zepta se GitHubu, zda vysla novejsi verze Turnstile. Nic se nestahuje ani neinstaluje.",
+    "Dismiss": "Skryt",
     "FailedToChangeVersionMode": "Nepodařilo se změnit způsob ukládání verzí",
     "FailedToObtainBuilds": "Nepodařilo se získat verze",
     "FailedToReadInstalledVersions": "Nepodařilo se načíst nainstalované verze",
@@ -153,11 +186,16 @@
     "Remove": "Odebrat",
     "RemoveBusyMessage": "Probíhaly jiné operace, takže nebylo nic odebráno. Zkuste to znovu, až budou hotové.",
     "RemoveConfirmMessage": "Tímto se nainstalovaná verze smaže z disku. Uložené hry, scénáře a nastavení zůstanou zachovány.",
-    "RemoveConfirmTitle": "Odebrat {0}?"
+    "RemoveConfirmTitle": "Odebrat {0}?",
+    "Settings": "Nastaveni",
+    "UpdateAvailable": "Turnstile {0} je k dispozici."
   },
   "hu": {
     "ActiveVersion": "{0} (aktív)",
     "Cancel": "Mégse",
+    "CheckForUpdates": "Frissitesek keresese indulaskor",
+    "CheckForUpdatesDetail": "Megkerdezi a GitHubot, hogy megjelent-e ujabb Turnstile. Semmi nem toltodik le es nem telepul.",
+    "Dismiss": "Elrejtes",
     "FailedToChangeVersionMode": "Nem sikerült módosítani a verziók tárolási módját",
     "FailedToObtainBuilds": "Nem sikerült lekérni a verziókat",
     "FailedToReadInstalledVersions": "Nem sikerült beolvasni a telepített verziókat",
@@ -173,16 +211,23 @@
     "Remove": "Eltávolítás",
     "RemoveBusyMessage": "Más műveletek voltak folyamatban, ezért semmi nem lett eltávolítva. Próbáld újra, amint befejeződtek.",
     "RemoveConfirmMessage": "Ez törli a telepített verziót a lemezről. A mentett játékok, forgatókönyvek és beállítások nem sérülnek.",
-    "RemoveConfirmTitle": "Eltávolítod a(z) {0} verziót?"
+    "RemoveConfirmTitle": "Eltávolítod a(z) {0} verziót?",
+    "Settings": "Beallitasok",
+    "UpdateAvailable": "A Turnstile {0} elerheto."
   },
   "ko": {
     "ActiveVersion": "{0} (사용 중)",
+    "AutoUpdateGame": "업데이트 자동 설치",
+    "BuildListing": "{0} ({1} 출시)",
     "Cancel": "취소",
+    "CheckForUpdates": "실행 시 업데이트 확인",
+    "CheckForUpdatesDetail": "새 버전의 Turnstile이 출시되었는지 GitHub에 물어봅니다. 아무것도 다운로드하거나 설치하지 않습니다.",
+    "Dismiss": "숨기기",
     "FailedToChangeVersionMode": "버전 저장 방식을 변경하지 못했습니다",
     "FailedToObtainBuilds": "버전 목록을 가져오지 못했습니다",
     "FailedToReadInstalledVersions": "설치된 버전을 읽지 못했습니다",
-    "FailedToRepairInstallation": "설치를 복구하지 못했습니다",
     "FailedToRemoveVersion": "버전을 삭제하지 못했습니다",
+    "FailedToRepairInstallation": "설치를 복구하지 못했습니다",
     "FailedToSwitchVersion": "버전을 전환하지 못했습니다",
     "KeepMultipleVersions": "여러 버전 설치 유지",
     "KeepMultipleVersionsDetail": "여러 버전을 동시에 설치하고 즉시 전환합니다. 버전이 디스크에 저장되는 방식이 바뀝니다.",
@@ -194,9 +239,9 @@
     "RemoveBusyMessage": "다른 작업이 진행 중이어서 아무것도 제거되지 않았습니다. 완료된 후에 다시 시도하세요.",
     "RemoveConfirmMessage": "설치된 버전을 디스크에서 삭제합니다. 저장된 게임, 시나리오, 설정은 영향을 받지 않습니다.",
     "RemoveConfirmTitle": "{0}을(를) 삭제할까요?",
+    "Settings": "설정",
     "StatusDownloading": "다운로드 중…",
     "StatusExtracting": "압축 푸는 중…",
-    "AutoUpdateGame": "업데이트 자동 설치",
-    "BuildListing": "{0} ({1} 출시)"
+    "UpdateAvailable": "Turnstile {0}을(를) 사용할 수 있습니다."
   }
 }

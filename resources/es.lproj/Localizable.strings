@@ -4,8 +4,11 @@
 "AvailableLabel" = "Disponible:";
 "BuildListing" = "{0} (publicado {1})";
 "Cancel" = "Cancelar";
+"CheckForUpdates" = "Buscar actualizaciones al iniciar";
+"CheckForUpdatesDetail" = "Pregunta a GitHub si se ha publicado una version mas reciente de Turnstile. No se descarga ni se instala nada.";
 "Day" = "hace un día";
 "Days" = "hace {0} días";
+"Dismiss" = "Ocultar";
 "Download" = "Descargar";
 "DownloadBuildFailedTitle" = "Error al descargar la build";
 "FailedToChangeVersionMode" = "No se pudo cambiar cómo se almacenan las versiones";
@@ -33,9 +36,12 @@
 "RemoveBusyMessage" = "Había otras tareas en curso, así que no se eliminó nada. Vuelve a intentarlo cuando terminen.";
 "RemoveConfirmMessage" = "Esto elimina la versión instalada del disco. Las partidas guardadas, los escenarios y los ajustes no se ven afectados.";
 "RemoveConfirmTitle" = "¿Eliminar {0}?";
+"Settings" = "Ajustes";
 "ShowDevelopmentVersions" = "Mostrar versiones de desarrollo";
 "StatusDownloading" = "Descargando…";
 "StatusExtracting" = "Extrayendo…";
 "Unknown" = "(Desconocido)";
+"Update" = "Actualizar";
+"UpdateAvailable" = "Turnstile {0} esta disponible.";
 "Year" = "hace un año";
 "Years" = "hace {0} años";

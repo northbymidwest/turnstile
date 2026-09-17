@@ -23,6 +23,11 @@ pub fn install(mtm: MainThreadMarker) {
         &[
             ("About Turnstile", "orderFrontStandardAboutPanel:", ""),
             ("-", "", ""),
+            // No target, so this travels the responder chain to the
+            // application delegate, which implements it. The menu is built
+            // before `Actions` exists, so it cannot point at that directly.
+            ("Settings...", "showSettings:", ","),
+            ("-", "", ""),
             ("Hide Turnstile", "hide:", "h"),
             ("Quit Turnstile", "terminate:", "q"),
         ],

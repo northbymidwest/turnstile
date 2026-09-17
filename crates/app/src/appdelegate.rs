@@ -17,6 +17,8 @@ use objc2::{MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{NSApplication, NSApplicationDelegate};
 use objc2_foundation::{MainThreadMarker, NSObjectProtocol};
 
+use crate::state::Msg;
+
 define_class!(
     #[unsafe(super(NSObject))]
     #[thread_kind = MainThreadOnly]
@@ -29,6 +31,18 @@ define_class!(
         #[unsafe(method(applicationShouldTerminateAfterLastWindowClosed:))]
         fn should_terminate_after_last_window_closed(&self, _app: &NSApplication) -> bool {
             true
+        }
+    }
+
+    impl AppDelegate {
+        /// The Settings menu item, which carries no target and so arrives
+        /// here along the responder chain. The menu is built before
+        /// `Actions` exists, so it cannot point at that object directly;
+        /// posting the same message reaches the same controller by the same
+        /// path either way.
+        #[unsafe(method(showSettings:))]
+        fn show_settings(&self, _sender: Option<&NSObject>) {
+            crate::mainqueue::post(Msg::ShowSettings);
         }
     }
 );

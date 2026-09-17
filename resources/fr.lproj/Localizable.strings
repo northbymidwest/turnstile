@@ -4,8 +4,11 @@
 "AvailableLabel" = "Disponible :";
 "BuildListing" = "{0} (publiée {1})";
 "Cancel" = "Annuler";
+"CheckForUpdates" = "Rechercher les mises a jour au demarrage";
+"CheckForUpdatesDetail" = "Demande a GitHub si une version plus recente de Turnstile est parue. Rien n’est telecharge ni installe.";
 "Day" = "il y a un jour";
 "Days" = "il y a {0} jours";
+"Dismiss" = "Masquer";
 "Download" = "Télécharger";
 "DownloadBuildFailedTitle" = "Impossible de télécharger la version";
 "FailedToChangeVersionMode" = "Impossible de changer le mode de stockage des versions";
@@ -33,9 +36,12 @@
 "RemoveBusyMessage" = "D'autres opérations étaient en cours, donc rien n'a été supprimé. Réessayez une fois qu'elles sont terminées.";
 "RemoveConfirmMessage" = "Cela supprime la version installée du disque. Les parties sauvegardées, les scénarios et les réglages ne sont pas affectés.";
 "RemoveConfirmTitle" = "Supprimer {0} ?";
+"Settings" = "Reglages";
 "ShowDevelopmentVersions" = "Inclure les versions en développement";
 "StatusDownloading" = "Téléchargement…";
 "StatusExtracting" = "Extraction…";
 "Unknown" = "(Inconnu)";
+"Update" = "Mettre à jour";
+"UpdateAvailable" = "Turnstile {0} est disponible.";
 "Year" = "il y a un an";
 "Years" = "il y a {0} ans";

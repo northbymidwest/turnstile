@@ -3,7 +3,9 @@
 //! reads `UiState` and pushes it into these controls.
 
 mod detail;
+pub mod settings;
 pub(crate) mod sidebar;
+pub mod updatebanner;
 mod window;
 
 pub mod alert;
@@ -43,11 +45,12 @@ pub struct Views {
     pub progress: Retained<NSProgressIndicator>,
     pub develop_check: Retained<NSButton>,
     pub auto_update_check: Retained<NSButton>,
-    pub multi_version_check: Retained<NSButton>,
+    pub settings: settings::Settings,
     pub title_label: Retained<NSTextField>,
     #[allow(dead_code)]
     pub version_label: Retained<NSTextField>,
     pub alert: AlertView,
+    pub update_banner: updatebanner::UpdateBanner,
 }
 
 /// Builds every view: the window, the split view joining the sidebar to the
@@ -59,8 +62,10 @@ pub fn build(mtm: MainThreadMarker) -> Views {
     let actions = actions::install(mtm, &sidebar_table);
 
     let (detail_controller, detail) = detail::build(mtm, &actions);
+    let settings = settings::build(mtm, &actions);
 
     let alert = AlertView::new(mtm);
+    let update_banner = updatebanner::UpdateBanner::new(mtm, &actions);
 
     // The banner sits above the detail pane rather than inside it, so
     // neither `detail.rs` nor `window.rs` needs to know it exists: this
@@ -70,6 +75,7 @@ pub fn build(mtm: MainThreadMarker) -> Views {
     let content = NSStackView::new(mtm);
     content.setOrientation(NSUserInterfaceLayoutOrientation::Vertical);
     content.setSpacing(0.0);
+    content.addArrangedSubview(&update_banner.view);
     content.addArrangedSubview(&alert.view);
     content.addArrangedSubview(&detail_controller.view());
 
@@ -80,6 +86,7 @@ pub fn build(mtm: MainThreadMarker) -> Views {
 
     Views {
         window,
+        settings,
         sidebar_table,
         actions,
         installed_popup: detail.installed_popup,
@@ -90,10 +97,10 @@ pub fn build(mtm: MainThreadMarker) -> Views {
         progress: detail.progress,
         develop_check: detail.develop_check,
         auto_update_check: detail.auto_update_check,
-        multi_version_check: detail.multi_version_check,
         title_label: detail.title_label,
         version_label: detail.version_label,
         alert,
+        update_banner,
     }
 }
 
@@ -228,10 +235,22 @@ pub fn apply(state: &UiState, views: &Views) {
         !state.is_busy(),
     );
     set_check(
-        &views.multi_version_check,
+        &views.settings.multi_version_check,
         state.multi_version,
         !state.is_busy(),
     );
+    set_check(
+        &views.settings.check_updates_check,
+        state.check_for_updates,
+        true,
+    );
+
+    // The banner, which is hidden whenever there is nothing to say: no update
+    // found, one dismissed, or the check turned off.
+    match &state.update {
+        Some(update) => views.update_banner.show(&update.version),
+        None => views.update_banner.hide(),
+    }
 
     // Error banner. Added here rather than in Task 18 because AlertView is
     // created by this task.

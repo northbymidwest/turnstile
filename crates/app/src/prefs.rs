@@ -15,6 +15,7 @@ use turnstile_core::store::Mode;
 use crate::state::Pref;
 
 pub const KEY_SHOW_DEVELOP: &str = "showDevelopmentVersions";
+pub const KEY_CHECK_FOR_UPDATES: &str = "checkForUpdates";
 pub const KEY_MULTI_VERSION: &str = "keepMultipleVersions";
 pub const KEY_SELECTED_GAME: &str = "selectedGame";
 
@@ -130,6 +131,19 @@ impl Prefs {
         self.defaults.synchronize();
     }
 
+    /// Defaults to true, which is why this cannot use `get_bool`: an absent
+    /// key reads as false there, and that would leave the check off for
+    /// everyone who has never opened Settings.
+    pub fn check_for_updates(&self) -> bool {
+        match self
+            .defaults
+            .objectForKey(&NSString::from_str(KEY_CHECK_FOR_UPDATES))
+        {
+            Some(_) => self.get_bool(KEY_CHECK_FOR_UPDATES),
+            None => true,
+        }
+    }
+
     pub fn show_develop(&self) -> bool {
         self.get_bool(KEY_SHOW_DEVELOP)
     }
@@ -156,6 +170,7 @@ impl Prefs {
 
     pub fn save(&self, pref: Pref, game: GameId) {
         match pref {
+            Pref::CheckForUpdates(v) => self.set_bool(KEY_CHECK_FOR_UPDATES, v),
             Pref::ShowDevelop(v) => self.set_bool(KEY_SHOW_DEVELOP, v),
             Pref::MultiVersion(v) => self.set_bool(KEY_MULTI_VERSION, v),
             Pref::SelectedGame(v) => self.set_string(KEY_SELECTED_GAME, v.key()),

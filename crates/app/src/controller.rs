@@ -29,6 +29,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use objc2::MainThreadMarker;
+use objc2_app_kit::NSWorkspace;
+use objc2_foundation::{NSString, NSURL};
 use turnstile_core::age::{self, Age};
 use turnstile_core::asset::HostArch;
 use turnstile_core::dirs::Dirs;
@@ -44,6 +46,13 @@ use crate::prefs::{Prefs, mode_for};
 use crate::state::{Effect, Msg, ReleaseRow, UiState, reduce};
 use crate::storelock;
 use crate::views::{self, Views};
+
+/// Where the update check looks. Named here rather than read from anywhere
+/// at runtime: an application that takes its own update source from a file it
+/// ships is an application whose update source can be changed by editing that
+/// file.
+const UPDATE_OWNER: &str = "northbymidwest";
+const UPDATE_REPO: &str = "turnstile";
 
 pub struct Controller {
     mtm: MainThreadMarker,
@@ -128,6 +137,7 @@ pub fn start(mtm: MainThreadMarker) {
     let selected = prefs.selected_game();
     let mut state = UiState::new(selected);
     state.show_develop = prefs.show_develop();
+    state.check_for_updates = prefs.check_for_updates();
     state.multi_version = prefs.multi_version();
     // Every game's auto-update value, not just the one being restored.
     // `Msg::SelectGame` clears the game-scoped state and reloads nothing
@@ -218,6 +228,16 @@ pub fn start(mtm: MainThreadMarker) {
         });
     }
 
+    // Last, and only if wanted. After the first `SelectGame` for the same
+    // reason the repair banner is: that message bumps the generation. This
+    // effect carries none, so it would survive the bump either way, but
+    // issuing it after means the window is already populated before a request
+    // to GitHub is in flight, and a slow or hanging network cannot delay the
+    // first render.
+    if controller.state.borrow().check_for_updates {
+        controller.perform(Effect::CheckForUpdate);
+    }
+
     // The controller owns `Views`, and nothing drops either for the life of
     // the process. Note `Views` declares its control fields after `actions`,
     // and controls hold `actions` as an *unretained* target, so if this ever
@@ -243,7 +263,7 @@ impl Controller {
         }
     }
 
-    fn perform(self: &Rc<Self>, effect: Effect) {
+    pub(crate) fn perform(self: &Rc<Self>, effect: Effect) {
         let mode = self.mode();
         match effect {
             Effect::SavePref(pref) => {
@@ -273,6 +293,33 @@ impl Controller {
             // corrupt or be corrupted by. Putting it there would be actively
             // harmful -- a slow or hanging GitHub request would hold every
             // install, switch and removal behind it for as long as it took.
+            Effect::CheckForUpdate => {
+                // Failure is silence. No network, a rate limit, a body that
+                // will not parse: all reach `Ok(None)` and no banner appears.
+                // The alternative is an error dialog on launch about a check
+                // nobody asked for, which is a worse application.
+                mainqueue::spawn(move || {
+                    let found = GitHub::new()
+                        .latest_turnstile(UPDATE_OWNER, UPDATE_REPO, env!("CARGO_PKG_VERSION"))
+                        .unwrap_or(None);
+                    Msg::UpdateChecked(found)
+                });
+            }
+
+            Effect::ShowSettings => {
+                views::settings::show(&self.views.settings, self.mtm);
+            }
+
+            Effect::OpenUrl(url) => {
+                // Both safe in objc2-app-kit 0.3: checked against the
+                // resolved crate rather than copied from an example written
+                // against another version.
+                let workspace = NSWorkspace::sharedWorkspace();
+                if let Some(url) = NSURL::URLWithString(&NSString::from_str(&url)) {
+                    workspace.openURL(&url);
+                }
+            }
+
             Effect::FetchReleases {
                 generation,
                 game,

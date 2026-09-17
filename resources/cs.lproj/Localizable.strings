@@ -4,8 +4,11 @@
 "AvailableLabel" = "Dostupné:";
 "BuildListing" = "{0} (vydáno {1})";
 "Cancel" = "Zrušit";
+"CheckForUpdates" = "Pri spusteni zkontrolovat aktualizace";
+"CheckForUpdatesDetail" = "Zepta se GitHubu, zda vysla novejsi verze Turnstile. Nic se nestahuje ani neinstaluje.";
 "Day" = "včera";
 "Days" = "před {0} dny";
+"Dismiss" = "Skryt";
 "Download" = "Stáhnout";
 "DownloadBuildFailedTitle" = "Selhalo stažení sestavení";
 "FailedToChangeVersionMode" = "Nepodařilo se změnit způsob ukládání verzí";
@@ -33,9 +36,12 @@
 "RemoveBusyMessage" = "Probíhaly jiné operace, takže nebylo nic odebráno. Zkuste to znovu, až budou hotové.";
 "RemoveConfirmMessage" = "Tímto se nainstalovaná verze smaže z disku. Uložené hry, scénáře a nastavení zůstanou zachovány.";
 "RemoveConfirmTitle" = "Odebrat {0}?";
+"Settings" = "Nastaveni";
 "ShowDevelopmentVersions" = "Zobrazit vývojové verze";
 "StatusDownloading" = "Stahuje se…";
 "StatusExtracting" = "Rozbaluje se…";
 "Unknown" = "(Neznámé)";
+"Update" = "Aktualizace";
+"UpdateAvailable" = "Turnstile {0} je k dispozici.";
 "Year" = "loni";
 "Years" = "před {0} lety";

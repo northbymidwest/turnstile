@@ -67,12 +67,16 @@ import json, os, re, sys, xml.etree.ElementTree as ET
 src, out = sys.argv[1], sys.argv[2]
 
 # Keys that describe the launcher itself rather than the games. The product
-# name is not translated. The launcher self-update strings are skipped because
-# that feature was cut deliberately: this is a separate application, so
-# upstream's release feed says nothing about whether THIS app is out of date.
-# Two of them also name "OpenLauncher" in their translated text, which has no
-# business being shipped inside a differently-named app.
-SKIP = {"OpenLauncher", "LauncherUpdateTitle", "LauncherUpdateMessage", "Update"}
+# name is not translated. LauncherUpdateTitle and LauncherUpdateMessage are
+# skipped because they name "OpenLauncher" in their translated text, which has
+# no business being shipped inside a differently-named app, and because
+# neither carries the version; Turnstile's own UpdateAvailable says it with
+# the version in it.
+#
+# "Update" is deliberately not skipped: it is the button label on the update
+# banner, it says the same thing whoever is updating, and upstream already
+# translates it in all nine languages.
+SKIP = {"OpenLauncher", "LauncherUpdateTitle", "LauncherUpdateMessage"}
 
 # Strings Turnstile adds, plus the upstream keys upstream itself left
 # untranslated in some languages. Held in their own file so re-running this

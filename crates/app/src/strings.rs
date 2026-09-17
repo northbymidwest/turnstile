@@ -38,6 +38,15 @@ pub const BUILTIN_EN: &[(&str, &str)] = &[
     ("Download", "Download"),
     ("Remove", "Remove"),
     ("Cancel", "Cancel"),
+    ("Update", "Update"),
+    ("Dismiss", "Dismiss"),
+    ("Settings", "Settings"),
+    ("CheckForUpdates", "Check for updates on launch"),
+    (
+        "CheckForUpdatesDetail",
+        "Asks GitHub whether a newer Turnstile has been released. Nothing is downloaded or installed.",
+    ),
+    ("UpdateAvailable", "Turnstile {0} is available."),
     ("ShowDevelopmentVersions", "Show development versions"),
     ("AutoUpdateGame", "Automatically install updates"),
     ("KeepMultipleVersions", "Keep multiple versions installed"),
@@ -103,6 +112,12 @@ pub const BUILTIN_EN: &[(&str, &str)] = &[
 /// production code, which looks keys up individually as it needs them.
 #[cfg_attr(not(test), allow(dead_code))]
 pub const REQUIRED_KEYS: &[&str] = &[
+    "Update",
+    "Dismiss",
+    "Settings",
+    "CheckForUpdates",
+    "CheckForUpdatesDetail",
+    "UpdateAvailable",
     "InstalledLabel",
     "AvailableLabel",
     "Play",
