@@ -2,10 +2,6 @@
 
 [![github](https://img.shields.io/badge/github-northbymidwest%2Fturnstile-blue?logo=github)](https://github.com/northbymidwest/turnstile)
 [![CI](https://github.com/northbymidwest/turnstile/actions/workflows/ci.yml/badge.svg)](https://github.com/northbymidwest/turnstile/actions/workflows/ci.yml)
-[![release](https://img.shields.io/github/v/release/northbymidwest/turnstile?display_name=tag&sort=semver)](https://github.com/northbymidwest/turnstile/releases/latest)
-[![downloads](https://img.shields.io/github/downloads/northbymidwest/turnstile/total)](https://github.com/northbymidwest/turnstile/releases)
-[![macOS](https://img.shields.io/badge/macOS-11%2B-black?logo=apple)](https://github.com/northbymidwest/turnstile/releases/latest)
-[![license](https://img.shields.io/badge/license-0BSD-blue)](LICENSE)
 
 A native macOS launcher for [OpenRCT2](https://github.com/OpenRCT2/OpenRCT2) and
 [OpenLoco](https://github.com/OpenLoco/OpenLoco). It downloads builds from GitHub
