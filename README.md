@@ -5,7 +5,9 @@
 
 A native macOS launcher for [OpenRCT2](https://github.com/OpenRCT2/OpenRCT2) and
 [OpenLoco](https://github.com/OpenLoco/OpenLoco). It downloads builds from GitHub
-releases, keeps track of what is installed, and launches the game.
+releases, keeps track of what is installed, and launches the game. Both games need
+data from the original release before they will run, so Turnstile also installs that
+straight from the Windows installers sold by GOG and points the game at it.
 
 Turnstile is an independent rewrite of
 [OpenLauncher](https://github.com/OpenRCT2/OpenLauncher) in Rust, using AppKit. It is
