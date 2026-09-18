@@ -1,24 +1,17 @@
 //! `Actions`, the single `NSObject` subclass every control's target and the
 //! sidebar's data source/delegate point at.
 //!
-//! `Actions` holds no controller reference and, apart from one suppression
-//! flag described below, no state. Its selectors just post a `Msg` onto the
-//! main queue (`mainqueue::post`), which delivers to whatever
-//! `mainqueue::register` installed -- the same path a background worker's
-//! reply takes. That is what lets `Actions` be built, and the sidebar show
-//! its two rows and respond to selection, before any controller exists:
-//! there is no `attach_target` step, because there is nothing to attach.
+//! It holds no controller reference and, apart from one suppression flag, no
+//! state: its selectors just post a `Msg` onto the main queue, the same path a
+//! background worker's reply takes. That is what lets `Actions` be built, and
+//! the sidebar work, before any controller exists.
 //!
 //! The one hazard: a message posted before `mainqueue::register` runs is
-//! silently dropped (see `mainqueue::post`). Every *button* selector waits
-//! on user input, so none of them can fire that early. The sidebar is the
-//! exception, because `tableViewSelectionDidChange:` is a notification
-//! rather than an action and AppKit sends it for a programmatic selection
-//! too -- including the one `views::apply` makes. `select_sidebar_row` is
-//! the only supported way to move that selection from code, and it holds
-//! `suppress_sidebar` for the duration so nothing is posted; see
-//! `table_view_selection_did_change` for why that is required rather than
-//! merely tidy.
+//! silently dropped. Every *button* selector waits on user input, so none can
+//! fire that early. The sidebar is the exception, because
+//! `tableViewSelectionDidChange:` is a notification and AppKit sends it for a
+//! programmatic selection too; `select_sidebar_row` is the only supported way
+//! to move that selection from code.
 
 use std::cell::Cell;
 
@@ -36,11 +29,9 @@ use crate::state::Msg;
 use crate::views::sidebar;
 use turnstile_core::gamedata::OriginalGame;
 
-/// Almost a pure event-to-message translator. The one field is the flag
-/// that tells `tableViewSelectionDidChange:` a selection came from
-/// `views::apply` rather than from the user. `Cell` rather than anything
-/// synchronised because `Actions` is `MainThreadOnly`, so both the write
-/// and the notification it guards happen on the same thread.
+/// The one field is the flag that tells `tableViewSelectionDidChange:` a
+/// selection came from `views::apply` rather than from the user. `Cell` rather
+/// than anything synchronised because `Actions` is `MainThreadOnly`.
 pub struct Ivars {
     suppress_sidebar: Cell<bool>,
 }
@@ -55,9 +46,8 @@ define_class!(
     unsafe impl NSObjectProtocol for Actions {}
 
     // SAFETY: `NSTableViewDataSource` has no safety requirements beyond
-    // returning a row count consistent with what the delegate below hands
-    // back for each row, which the fixed, two-entry `sidebar::ROWS` table
-    // guarantees.
+    // returning a row count consistent with what the delegate hands back per
+    // row, which the fixed `sidebar::ROWS` table guarantees.
     unsafe impl NSTableViewDataSource for Actions {
         #[unsafe(method(numberOfRowsInTableView:))]
         fn number_of_rows_in_table_view(&self, _table_view: &NSTableView) -> NSInteger {
@@ -65,9 +55,8 @@ define_class!(
         }
     }
 
-    // SAFETY: `NSControlTextEditingDelegate` has no safety requirements.
-    // Required by `NSTableViewDelegate` below; it has no methods of its
-    // own that apply here.
+    // SAFETY: `NSControlTextEditingDelegate` has no safety requirements. It is
+    // required by `NSTableViewDelegate` below.
     unsafe impl NSControlTextEditingDelegate for Actions {}
 
     // SAFETY: `NSTableViewDelegate` has no safety requirements.
@@ -83,31 +72,17 @@ define_class!(
         }
 
         /// The sidebar's one selection hook, covering mouse and keyboard
-        /// alike.
+        /// alike. This replaced a `sidebarChanged:` target/action, which the
+        /// table fires only on a click, so arrow keys never reached the
+        /// reducer. The two are not combined, because a click fires both and
+        /// `SelectGame` twice would refetch the release list for nothing.
         ///
-        /// This replaced a `sidebarChanged:` target/action, which the table
-        /// fires only on a click: arrow keys moved `NSTableView`'s own
-        /// selection and redrew the highlight but never reached the
-        /// reducer, so a keyboard-only user could not change game at all.
-        /// The two are not combined -- the action was removed rather than
-        /// kept alongside this -- because a click fires both, and posting
-        /// `SelectGame` twice would bump the generation twice and refetch
-        /// the release list for nothing.
-        ///
-        /// AppKit sends this for a programmatic selection as well as a
-        /// user's, and `views::apply` sets the selection on every single
-        /// render. Unguarded, the startup restore of a persisted game --
-        /// the one case where `apply` really does move the row -- would
-        /// post a `SelectGame` out of the middle of a render, bumping the
-        /// generation and refetching the release list it had just asked
-        /// for. Whether that settles after one extra round or keeps going
-        /// depends on AppKit staying silent when a programmatic selection
-        /// does not actually change, which is not something to build on:
-        /// the flag makes the question moot. `select_sidebar_row` is the
-        /// only thing that sets it, and AppKit posts this notification
-        /// synchronously from inside
-        /// `selectRowIndexes:byExtendingSelection:`, which is what makes a
-        /// plain flag sufficient.
+        /// AppKit sends this for a programmatic selection as well, and
+        /// `views::apply` sets the selection on every render, so the startup
+        /// restore of a persisted game would otherwise post a `SelectGame` out
+        /// of the middle of a render. `select_sidebar_row` is the only thing
+        /// that sets the flag, and AppKit posts this notification
+        /// synchronously, which is what makes a plain flag sufficient.
         #[unsafe(method(tableViewSelectionDidChange:))]
         fn table_view_selection_did_change(&self, notification: &NSNotification) {
             if self.ivars().suppress_sidebar.get() {
@@ -124,7 +99,6 @@ define_class!(
     }
 
     impl Actions {
-        // One selector per control.
         #[unsafe(method(playClicked:))]
         fn play_clicked(&self, _sender: Option<&NSObject>) {
             self.send(Msg::ClickPlay);
@@ -197,10 +171,9 @@ define_class!(
             }
         }
 
-        /// One selector for three buttons, told apart by the sender's tag.
-        /// The tag is the game's position in `OriginalGame::ALL`, set where
-        /// the button is built from the same list, so the two cannot drift
-        /// the way a hand-written number would.
+        /// One selector for three buttons, told apart by the sender's tag: the
+        /// game's position in `OriginalGame::ALL`, set where the button is
+        /// built from the same list, so the two cannot drift.
         #[unsafe(method(installGameDataClicked:))]
         fn install_game_data_clicked(&self, sender: Option<&NSButton>) {
             if let Some(game) = sender.and_then(game_for_tag) {
@@ -220,7 +193,7 @@ define_class!(
     }
 );
 
-/// `indexOfSelectedItem` returns `-1` when nothing is selected; that has no
+/// `indexOfSelectedItem` returns `-1` when nothing is selected, which has no
 /// `usize` equivalent, so it is treated the same as no sender at all.
 fn selected_index(popup: Option<&NSPopUpButton>) -> Option<usize> {
     usize::try_from(popup?.indexOfSelectedItem()).ok()
@@ -239,41 +212,34 @@ impl Actions {
         unsafe { msg_send![super(this), init] }
     }
 
-    /// Moves the sidebar's selection from code without the delegate
-    /// mistaking it for the user's doing. Every programmatic selection must
-    /// go through here: `views::apply` calls it on every render, and a bare
-    /// `selectRowIndexes:byExtendingSelection:` would post a `SelectGame`
-    /// straight back into the render that made it.
+    /// Moves the sidebar's selection from code without the delegate mistaking
+    /// it for the user's doing. Every programmatic selection must go through
+    /// here: a bare `selectRowIndexes:byExtendingSelection:` would post a
+    /// `SelectGame` straight back into the render that made it.
     ///
-    /// The flag is cleared unconditionally afterwards rather than only on
-    /// the way out of a successful call, because leaving it set would
-    /// silently deafen the sidebar for the rest of the session.
+    /// The flag is cleared unconditionally afterwards, since leaving it set
+    /// would silently deafen the sidebar for the rest of the session.
     pub fn select_sidebar_row(&self, table: &NSTableView, row: usize) {
         self.ivars().suppress_sidebar.set(true);
         table.selectRowIndexes_byExtendingSelection(&NSIndexSet::indexSetWithIndex(row), false);
         self.ivars().suppress_sidebar.set(false);
     }
 
-    /// No controller reference: `mainqueue::post` delivers to whatever
-    /// `mainqueue::register` installed. One runloop hop, and every message
-    /// reaches the controller by the same path whether it came from a
-    /// worker thread or a control.
     fn send(&self, msg: Msg) {
         mainqueue::post(msg);
     }
 }
 
 /// Builds the app's `Actions` instance and wires it in as `table`'s data
-/// source and delegate, so the sidebar shows its two rows and responds to
-/// selection.
+/// source and delegate.
 ///
-/// Deliberately no `setTarget`/`setAction` here: selection is handled by
-/// `tableViewSelectionDidChange:` alone, which covers the keyboard as well
-/// as the mouse. Adding the action back would double every click.
+/// Deliberately no `setTarget`/`setAction`: selection is handled by
+/// `tableViewSelectionDidChange:` alone, which covers the keyboard as well as
+/// the mouse. Adding the action back would double every click.
 pub fn install(mtm: MainThreadMarker, table: &NSTableView) -> Retained<Actions> {
     let actions = Actions::new(mtm);
-    // SAFETY: `actions` is retained by `Views` for the app's lifetime,
-    // which outlives `table`.
+    // SAFETY: `actions` is retained by `Views` for the app's lifetime, which
+    // outlives `table`.
     unsafe {
         table.setDataSource(Some(ProtocolObject::from_ref(&*actions)));
         table.setDelegate(Some(ProtocolObject::from_ref(&*actions)));
@@ -281,11 +247,9 @@ pub fn install(mtm: MainThreadMarker, table: &NSTableView) -> Retained<Actions> 
     actions
 }
 
-/// The game a tagged button stands for.
-///
-/// Out of range means a button somebody tagged by hand rather than from
-/// `OriginalGame::ALL`, and doing nothing is better than acting on whichever
-/// game happens to sit at index zero.
+/// The game a tagged button stands for. Out of range means a button somebody
+/// tagged by hand, and doing nothing beats acting on whichever game sits at
+/// index zero.
 fn game_for_tag(sender: &NSButton) -> Option<OriginalGame> {
     let tag = usize::try_from(sender.tag()).ok()?;
     OriginalGame::ALL.get(tag).copied()

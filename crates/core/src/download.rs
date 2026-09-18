@@ -132,15 +132,10 @@ mod tests {
         url
     }
 
-    /// A directory per test, not per process.
-    ///
-    /// These tests run in parallel in one process, and this clears the
-    /// directory before using it, so a shared one meant that whichever test
-    /// called this second deleted the file the first was about to read. It
-    /// survived on a machine with enough cores to start every test at once,
-    /// where all the calls land before any download finishes, and failed on a
-    /// CI runner with fewer, where a later test starts while an earlier one is
-    /// still going. `--test-threads=2` reproduces it on any machine.
+    /// A directory per test, not per process: these run in parallel and this
+    /// clears the directory before using it, so a shared one meant whichever
+    /// test called it second deleted the file the first was about to read.
+    /// `--test-threads=2` reproduces it on any machine.
     fn tempdir(name: &str) -> std::path::PathBuf {
         let p = std::env::temp_dir().join(format!("turnstile-dl-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&p);

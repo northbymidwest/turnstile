@@ -12,12 +12,9 @@ use objc2_foundation::{NSArray, NSString};
 
 use crate::strings;
 
-/// Asks for a GOG installer.
-///
-/// The panel allows any file rather than only `.exe`. What makes a file
-/// readable here is what is inside it, which is checked when it is read, and
-/// a filter that hid the file somebody is looking at would be worse than one
-/// that lets them pick the wrong thing and be told.
+/// Asks for a GOG installer. Any file rather than only `.exe`: what makes one
+/// readable is what is inside it, and a filter that hid the file somebody is
+/// looking at would be worse than letting them pick wrong and be told.
 pub fn choose_installer(mtm: MainThreadMarker) -> Option<PathBuf> {
     let panel = open_panel(mtm);
     panel.setCanChooseFiles(true);

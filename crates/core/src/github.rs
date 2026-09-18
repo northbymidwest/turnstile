@@ -89,11 +89,8 @@ impl GitHub {
         GitHub
     }
 
-    /// The only place `ureq` is touched. If the 3.x surface differs from
-    /// what is written here, this function is the only thing that changes.
-    /// A GET against the public API, shared with `selfupdate`, which asks a
-    /// different question of the same host and wants the same rate-limit and
-    /// error handling.
+    /// The only place `ureq` is touched: a GET against the public API, shared
+    /// with `selfupdate`, which wants the same rate-limit and error handling.
     pub(crate) fn get_public(&self, url: &str) -> Result<String, CoreError> {
         self.get(url)
     }
@@ -139,8 +136,7 @@ impl GitHub {
 
         // Upstream fetches /releases/latest unconditionally because at its
         // page size of 75 a newer release could fall off page 1. At 100 that
-        // should never happen, so the request is only made when the page
-        // genuinely contains no stable release.
+        // should never happen.
         if page_has_no_stable_release(&body) {
             let latest_url = format!(
                 "https://api.github.com/repos/{}/{}/releases/latest",
@@ -209,7 +205,6 @@ mod tests {
 
     #[test]
     fn openloco_yields_nothing_on_an_intel_mac() {
-        // OpenLoco publishes an arm64-only macOS build.
         let releases = parse_releases(OPENLOCO, Channel::Release, HostArch::X86_64).unwrap();
         assert!(
             releases.is_empty(),
@@ -219,7 +214,6 @@ mod tests {
 
     #[test]
     fn openrct2_still_yields_releases_on_an_intel_mac() {
-        // OpenRCT2 ships universal binaries.
         let releases = parse_releases(OPENRCT2, Channel::Release, HostArch::X86_64).unwrap();
         assert!(!releases.is_empty());
     }

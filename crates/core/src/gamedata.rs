@@ -1,17 +1,15 @@
 //! Installing the original games' data out of a GOG.com installer.
 //!
-//! OpenRCT2 and OpenLoco are reimplementations of the game engines, not of
-//! the games: both need the graphics, sounds and scenarios from the original
-//! release before they will run at all. On Windows people point them at an
-//! existing install. There is nothing to point at on a Mac, because the
-//! original games were never released for one, so the data has to come out of
-//! the Windows installer people already own.
+//! OpenRCT2 and OpenLoco reimplement the game engines, not the games: both
+//! need the graphics, sounds and scenarios from the original release before
+//! they will run at all. The originals were never released for the Mac, so the
+//! data has to come out of the Windows installer people already own.
 //!
-//! Those installers are Inno Setup executables, and GOG's are built so that
-//! every file inside is split into parts, compressed again, and stored under
-//! the MD5 of its contents, with the real name recorded in the installer's
-//! own script. The `inno` crate does that reassembly; this module decides
-//! which of those files belong in a game directory and puts them there.
+//! Those installers are Inno Setup executables, and GOG's split every file
+//! into parts, compress them again, and store them under the MD5 of their
+//! contents, with the real name recorded in the installer's own script. The
+//! `inno` crate does that reassembly; this module decides which of those files
+//! belong in a game directory and puts them there.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -22,9 +20,9 @@ use crate::error::CoreError;
 
 /// An original game whose data one of the reimplementations needs.
 ///
-/// This is not [`GameId`]: that is a game Turnstile installs, of which there
-/// are two, while there are three of these. RollerCoaster Tycoon 1's data is
-/// extra content for OpenRCT2 rather than a game in its own right.
+/// Not [`GameId`]: that is a game Turnstile installs, of which there are two,
+/// while there are three of these. RollerCoaster Tycoon 1's data is extra
+/// content for OpenRCT2 rather than a game in its own right.
 ///
 /// [`GameId`]: crate::game::GameId
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -41,9 +39,9 @@ impl OriginalGame {
         Self::Locomotion,
     ];
 
-    /// The directory this game's data is installed into, under whichever
-    /// root is configured. Stable, because a game's configuration file points
-    /// at it and renaming this would strand the install.
+    /// The directory this game's data is installed into, under whichever root
+    /// is configured. Stable, because a game's configuration file points at it
+    /// and renaming this would strand the install.
     #[must_use]
     pub const fn directory(self) -> &'static str {
         match self {
@@ -53,12 +51,9 @@ impl OriginalGame {
         }
     }
 
-    /// The executable that identifies an installer as holding this game.
-    ///
-    /// The data files cannot do this job. RollerCoaster Tycoon 2 is known by
-    /// `Data/g1.dat` and Locomotion by `Data/g1.DAT`, which are the same name
-    /// on a Mac, where the filesystem does not distinguish them by default.
-    /// The executables differ in more than case.
+    /// The executable that identifies an installer as holding this game. The
+    /// data files cannot: RollerCoaster Tycoon 2's `Data/g1.dat` and
+    /// Locomotion's `Data/g1.DAT` are the same name on a Mac.
     #[must_use]
     const fn executable(self) -> &'static str {
         match self {
@@ -69,16 +64,13 @@ impl OriginalGame {
     }
 
     /// The file a reimplementation looks for to decide whether a directory
-    /// really holds this game, and so what this module checks after
-    /// installing rather than reporting a success the game will reject.
+    /// really holds this game, checked after installing rather than reporting
+    /// a success the game will reject.
     #[must_use]
     pub const fn marker(self) -> &'static str {
         match self {
-            // What OpenRCT2 documents for --rct1-data-path.
             Self::RollerCoasterTycoon1 => "Data/csg1.dat",
-            // What OpenRCT2's `set-rct2` checks, and --rct2-data-path.
             Self::RollerCoasterTycoon2 => "Data/g1.dat",
-            // What OpenLoco reports when the folder is wrong.
             Self::Locomotion => "Data/g1.DAT",
         }
     }
@@ -92,9 +84,8 @@ pub fn installed_at(game: OriginalGame, directory: &Path) -> bool {
 
 /// Reads an installer and says which game's data it holds.
 ///
-/// Returns `Ok(None)` for an installer this does not recognise, which is a
-/// perfectly ordinary thing for somebody to pick by mistake and not an error
-/// worth a different shape of message.
+/// Returns `Ok(None)` for an installer this does not recognise, which is an
+/// ordinary thing for somebody to pick by mistake.
 ///
 /// # Errors
 ///
@@ -122,9 +113,9 @@ pub fn identify(installer: &Path) -> Result<Option<OriginalGame>, CoreError> {
 ///
 /// # Errors
 ///
-/// Returns [`CoreError::ExtractionFailed`] if the installer cannot be read,
-/// if a file fails the checksum the installer recorded for it, or if what
-/// was extracted does not contain the game's marker file.
+/// Returns [`CoreError::ExtractionFailed`] if the installer cannot be read, if
+/// a file fails its recorded checksum, or if what was extracted does not
+/// contain the game's marker file.
 pub fn install_game_data(
     installer: &Path,
     game: OriginalGame,
@@ -156,8 +147,8 @@ pub fn install_game_data(
         )));
     }
 
-    // The destination may hold an older copy. Move it aside rather than
-    // deleting it first, so a failure here leaves the old data in place.
+    // Move an older copy aside rather than deleting it first, so a failure
+    // here leaves the old data in place.
     let previous = parent.join(format!(".previous-{}", game.directory()));
     let _ = std::fs::remove_dir_all(&previous);
     let had_previous = destination.exists();
@@ -281,21 +272,17 @@ fn extract_into(
 /// Whether a file the installer produces belongs in the game directory.
 ///
 /// An installer writes into several places, named by the directory constants
-/// it uses: `tmp` for the wizard's own images and helper libraries,
-/// `commonappdata` for a support uninstaller. Only what goes to the program's
-/// own directory is the game. Files recovered from their parts carry no
-/// constant at all, because the script that names them gives a path relative
-/// to where the installer is unpacking, and those are the bulk of the game.
+/// it uses: `tmp` for the wizard's own images, `commonappdata` for a support
+/// uninstaller. Files recovered from their parts carry no constant at all,
+/// because the script names them relative to where the installer is unpacking,
+/// and those are the bulk of the game.
 fn is_install_file(file: &inno::gog::InstallerFile) -> bool {
     matches!(file.root(), None | Some("app"))
 }
 
 /// Writes one extracted file, refusing any path that would leave the
-/// destination.
-///
-/// The paths come out of the installer, so they are not to be trusted with a
-/// `..` or a leading separator however unlikely that is in a game somebody
-/// bought from a shop.
+/// destination. The paths come out of the installer, so they are not to be
+/// trusted with a `..` or a leading separator.
 fn write_file(destination: &Path, path: &str, bytes: &[u8]) -> Result<(), CoreError> {
     let mut target = destination.to_path_buf();
 
@@ -343,9 +330,6 @@ mod tests {
 
     #[test]
     fn every_game_has_a_directory_and_a_marker_of_its_own() {
-        // The directory names end up in a game's configuration file, so a
-        // collision between two of them would point one game at another's
-        // data.
         let mut directories: Vec<_> = OriginalGame::ALL.iter().map(|g| g.directory()).collect();
         directories.sort_unstable();
         directories.dedup();
@@ -354,9 +338,6 @@ mod tests {
 
     #[test]
     fn the_two_games_that_share_a_marker_name_are_told_apart_by_something_else() {
-        // RollerCoaster Tycoon 2 and Locomotion are Data/g1.dat and
-        // Data/g1.DAT, which are one file on a Mac. Identification cannot
-        // rest on those.
         let rct2 = OriginalGame::RollerCoasterTycoon2;
         let loco = OriginalGame::Locomotion;
         assert!(rct2.marker().eq_ignore_ascii_case(loco.marker()));
@@ -391,8 +372,6 @@ mod tests {
 
     #[test]
     fn a_path_that_climbs_out_of_the_destination_is_refused() {
-        // Nothing in the format stops an installer naming such a path, and
-        // the consequence of following one is writing wherever it says.
         let directory = tempfile::tempdir().unwrap();
         let error = write_file(directory.path(), "../escaped.txt", b"x").unwrap_err();
         assert!(error.to_string().contains("outside"), "{error}");
@@ -401,8 +380,6 @@ mod tests {
 
     #[test]
     fn a_leading_separator_does_not_make_the_path_absolute() {
-        // `Path::push` replaces the whole path when given an absolute one,
-        // so this would otherwise write to the filesystem root.
         let directory = tempfile::tempdir().unwrap();
         write_file(directory.path(), "/etc/passwd", b"x").unwrap();
         assert!(directory.path().join("etc/passwd").exists());

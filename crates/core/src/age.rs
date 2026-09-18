@@ -20,18 +20,15 @@ pub enum Age {
 const DAYS_PER_MONTH: u64 = 30;
 const DAYS_PER_YEAR: u64 = 365;
 
-/// The current instant, for callers that need to hand `Age::since` a `now`
-/// but must not take a direct dependency on the `time` crate themselves --
-/// `turnstile` (the app crate) is one: its dependency list is fixed and does
-/// not include `time`, so this is the only door into `OffsetDateTime::now_utc`
-/// it has.
+/// The current instant, for callers that must not depend on the `time` crate
+/// themselves. `turnstile` (the app crate) is one: its dependency list is
+/// fixed and does not include `time`.
 pub fn now() -> OffsetDateTime {
     OffsetDateTime::now_utc()
 }
 
 impl Age {
     pub fn since(published: OffsetDateTime, now: OffsetDateTime) -> Age {
-        // A clock skew or a future-dated release must not underflow.
         let seconds = (now - published).whole_seconds().max(0) as u64;
 
         let minutes = seconds / 60;
@@ -84,7 +81,6 @@ mod tests {
 
     #[test]
     fn every_variant_is_reachable() {
-        // The property upstream's rule violates: its Year is unreachable.
         let reached = [
             age_after(Duration::minutes(1)),
             age_after(Duration::minutes(5)),

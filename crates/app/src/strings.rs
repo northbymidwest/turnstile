@@ -1,16 +1,14 @@
 //! Localized strings for the interface. Upstream's `.resx` files were
-//! converted once by `scripts/import-resx.sh` into `resources/<lang>.lproj/
-//! Localizable.strings`, which is checked in and copied into the app bundle
-//! at build time (Task 17). This module is the only thing that reads them.
+//! converted once by `scripts/import-resx.sh` into
+//! `resources/<lang>.lproj/Localizable.strings`, which is checked in and
+//! copied into the app bundle at build time. This module is the only thing
+//! that reads them.
 //!
 //! `Age` and `Status` are enums in `turnstile-core` precisely so this layer
-//! owns all grammar and wording: core decides what is true, this module
-//! decides how to say it. Do not add formatting logic to core.
+//! owns all grammar and wording. Do not add formatting logic to core.
 //!
-//! `{0}`-style placeholders are kept exactly as upstream wrote them, rather
-//! than rewritten to `%@`, so future upstream translation updates drop
-//! straight into `scripts/import-resx.sh`'s output with no reformatting.
-//! Substitution happens here in [`substitute`].
+//! `{0}`-style placeholders are kept exactly as upstream wrote them, so future
+//! translation updates drop straight into `scripts/import-resx.sh`'s output.
 
 use objc2_foundation::{NSBundle, NSString};
 use turnstile_core::age::Age;
@@ -18,18 +16,11 @@ use turnstile_core::download::Status;
 
 /// English fallbacks compiled into the binary. `cargo run` and `cargo test`
 /// have no app bundle around them, so `NSBundle::mainBundle()` finds no
-/// `.lproj` and this table is what actually renders during development.
+/// `.lproj` and this table is what renders during development.
 ///
-/// It also remains the last line of defence in a packaged build: every key
-/// `REQUIRED_KEYS` lists is shipped in all nine `.lproj` directories today
-/// (`scripts/import-resx.sh` fills the handful upstream itself left
-/// untranslated, in `de`, `fr`, and `ko`, from `resources/
-/// turnstile-strings.json`), but `NSBundle` returns the *key itself* for
-/// any lookup that misses, whether from a future translation regression, a
-/// build that ships a stripped-down bundle, or a key this module starts
-/// asking for before its translation exists. Without this table any of
-/// those would put a raw identifier like "StatusDownloading" in the UI
-/// instead of readable English.
+/// It is also the last line of defence in a packaged build: `NSBundle` returns
+/// the *key itself* for any lookup that misses, which would put a raw
+/// identifier like "StatusDownloading" in the UI.
 pub const BUILTIN_EN: &[(&str, &str)] = &[
     ("InstalledLabel", "Installed:"),
     ("AvailableLabel", "Available:"),
@@ -134,10 +125,9 @@ pub const BUILTIN_EN: &[(&str, &str)] = &[
     ("Years", "{0} years ago"),
 ];
 
-/// Keys the interface actually asks for. The test below asserts every one
-/// has a builtin, so a typo in a key name fails the build rather than
-/// shipping a raw identifier into the UI. Read only by that test, not by
-/// production code, which looks keys up individually as it needs them.
+/// Keys the interface actually asks for. The test below asserts every one has
+/// a builtin, so a typo fails the build rather than shipping a raw identifier.
+/// Read only by that test.
 #[cfg_attr(not(test), allow(dead_code))]
 pub const REQUIRED_KEYS: &[&str] = &[
     "Update",
@@ -208,8 +198,8 @@ pub const REQUIRED_KEYS: &[&str] = &[
 pub fn get(key: &str) -> String {
     let ns_key = NSString::from_str(key);
     let bundle = NSBundle::mainBundle();
-    // `localizedStringForKey:value:table:` returns the key itself when
-    // nothing matches, which is how a miss is detected.
+    // `localizedStringForKey:value:table:` returns the key itself when nothing
+    // matches, which is how a miss is detected.
     let found = bundle.localizedStringForKey_value_table(&ns_key, None, None);
     let found = found.to_string();
     if found != key {
@@ -222,10 +212,8 @@ pub fn get(key: &str) -> String {
         .unwrap_or_else(|| key.to_string())
 }
 
-/// .NET's `{0}` placeholders, kept verbatim so upstream translations port
-/// over without rewriting every string to `%@`. An index with no
-/// corresponding argument is left in the output rather than substituted
-/// with garbage or panicking.
+/// .NET's `{0}` placeholders, kept verbatim. An index with no corresponding
+/// argument is left in the output rather than substituted with garbage.
 pub fn substitute(template: &str, args: &[&str]) -> String {
     let mut out = template.to_string();
     for (i, arg) in args.iter().enumerate() {
@@ -276,15 +264,6 @@ mod tests {
 
     #[test]
     fn a_key_missing_from_the_bundle_falls_back_to_the_builtin_english_text() {
-        // `cargo test` runs with no app bundle around it, so
-        // `NSBundle::mainBundle()` finds no `.lproj` at all and every
-        // lookup takes this path, for every key, not just these two. This
-        // proves the fallback branch itself returns the compiled English
-        // text rather than the raw key; it cannot distinguish that from a
-        // key one specific shipped `.lproj` happens to be missing, because
-        // in this environment there is no bundle for any of them to be
-        // missing from. `every_shipped_language_carries_every_required_key`
-        // below is what actually checks the real files on disk.
         assert_eq!(get("StatusDownloading"), "Downloading\u{2026}");
         assert_eq!(get("BuildListing"), "{0} (released {1})");
     }
@@ -305,13 +284,9 @@ mod tests {
         }
     }
 
-    /// Every key appearing in a `.strings` file, keyed loosely: this reads
-    /// straight off disk rather than through `NSBundle`, so it also catches
-    /// a shipped `.lproj` that is missing entirely, malformed, or never
-    /// regenerated after `REQUIRED_KEYS` grew. The parse only needs to find
-    /// key names, which `scripts/import-resx.sh` always writes as a plain
-    /// identifier before the first unescaped `"`; it does not need to
-    /// unescape values.
+    /// Every key appearing in a `.strings` file, read straight off disk rather
+    /// than through `NSBundle`, so this also catches a shipped `.lproj` that is
+    /// missing, malformed, or never regenerated after `REQUIRED_KEYS` grew.
     fn keys_in_strings_file(path: &std::path::Path) -> std::collections::HashSet<String> {
         let content = std::fs::read_to_string(path)
             .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
@@ -328,12 +303,6 @@ mod tests {
 
     #[test]
     fn every_shipped_language_carries_every_required_key() {
-        // A future import regression that drops a language's keys must
-        // fail the build, not silently revert that language to English via
-        // BUILTIN_EN: nobody would notice a `.lproj` quietly losing
-        // coverage otherwise. `CARGO_MANIFEST_DIR` is a compile-time
-        // absolute path, so this does not depend on the test's working
-        // directory.
         let resources_dir =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../resources");
         let entries = std::fs::read_dir(&resources_dir)
@@ -365,11 +334,9 @@ mod tests {
         );
     }
 
-    /// Every key any module asks for, read out of this crate's own source.
-    /// The scan matches `strings::get("...")` and its `format*` siblings,
-    /// which is how every caller outside this module spells it; the
-    /// unqualified `get("...")` calls in these tests, some of which pass
-    /// deliberately unknown keys, are invisible to it for the same reason.
+    /// Every key any module asks for, read out of this crate's own source. The
+    /// scan matches `strings::get("...")` and its `format*` siblings, which is
+    /// how every caller outside this module spells it.
     fn keys_used_in_source(dir: &std::path::Path) -> Vec<(String, String)> {
         let mut found = Vec::new();
         for entry in std::fs::read_dir(dir)
@@ -383,8 +350,6 @@ mod tests {
             if path.extension().and_then(|e| e.to_str()) != Some("rs") {
                 continue;
             }
-            // This file writes the patterns it searches for, so scanning it
-            // would find its own doc comments rather than any real call.
             if path.file_name().and_then(|f| f.to_str()) == Some("strings.rs") {
                 continue;
             }
@@ -392,8 +357,8 @@ mod tests {
                 .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
             for call in ["strings::get(", "strings::format1(", "strings::format2("] {
                 for (offset, _) in content.match_indices(call) {
-                    // rustfmt breaks a long call after the paren, so the key
-                    // is not always the next character.
+                    // rustfmt breaks a long call after the paren, so the key is not
+                    // always the next character.
                     let rest = content[offset + call.len()..].trim_start();
                     let Some(rest) = rest.strip_prefix('"') else {
                         continue;
@@ -409,11 +374,6 @@ mod tests {
 
     #[test]
     fn every_key_the_source_asks_for_is_one_we_ship() {
-        // A key nobody translated does not fail, crash, or render empty: it
-        // renders as itself, so `LauncherUpdateMessage` sits in the window
-        // looking like a variable name. That is invisible to every other
-        // test here, which check the tables against each other and never
-        // against the calls, so this one reads the calls.
         let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
         let used = keys_used_in_source(&src);
         assert!(

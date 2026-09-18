@@ -1,22 +1,17 @@
 //! Telling a reimplementation where the original game's data is.
 //!
-//! These are the games' own configuration files, not Turnstile's. Somebody
-//! has their key bindings, their volume and their language in there, so
-//! setting one value means editing one line and leaving the rest of the file
-//! exactly as it was, not writing a file out from a template.
+//! These are the games' own configuration files, not Turnstile's. Somebody has
+//! their key bindings, their volume and their language in there, so setting one
+//! value means editing one line and leaving the rest exactly as it was.
 //!
-//! Neither game needs a complete file to start from. Given one key, each
-//! fills in every default it has and rewrites the file itself on first run,
-//! which was checked by giving OpenLoco a one line `openloco.yml` and
-//! watching it grow to a hundred and seventy.
+//! Neither game needs a complete file to start from: given one key, each fills
+//! in every default it has and rewrites the file on first run.
 //!
 //! None of this decodes the file. OpenLoco writes eight raw `0xff` bytes as
 //! the name of the owner face nobody has chosen, so its configuration stops
-//! being valid UTF-8 the moment the game has run once, and reading it as text
-//! fails with "stream did not contain valid UTF-8". Paths on this platform
-//! are bytes too, so a directory whose name is not valid UTF-8 would be
-//! written back mangled. Everything here works on bytes and copies through
-//! every line it is not changing.
+//! being valid UTF-8 the moment the game has run once. Paths on this platform
+//! are bytes too. Everything here works on bytes and copies through every line
+//! it is not changing.
 
 use std::ffi::OsString;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
@@ -134,11 +129,9 @@ pub fn configured_path(game: OriginalGame, dirs: &Dirs) -> Result<Option<PathBuf
     Ok(value.map(|bytes| PathBuf::from(OsString::from_vec(bytes))))
 }
 
-/// Replaces a file without ever leaving it half written.
-///
-/// This is somebody's settings. A crash between truncating and writing would
-/// lose the lot, so the new text goes to a neighbouring file and is renamed
-/// over the old one, which is atomic.
+/// Replaces a file without ever leaving it half written. This is somebody's
+/// settings: a crash between truncating and writing would lose the lot, so the
+/// new text goes to a neighbouring file and is renamed over the old one.
 fn write_replacing(path: &Path, text: &[u8]) -> Result<(), CoreError> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(io)?;
@@ -169,9 +162,9 @@ fn line_ending(text: &[u8]) -> &'static [u8] {
     }
 }
 
-/// Splits into lines the way `str::lines` does, without requiring the bytes
-/// to be text: on `\n`, dropping a `\r` before it, and without a trailing
-/// empty line.
+/// Splits into lines the way `str::lines` does, without requiring the bytes to
+/// be text: on `\n`, dropping a `\r` before it, and without a trailing empty
+/// line.
 fn lines(text: &[u8]) -> Vec<&[u8]> {
     if text.is_empty() {
         return Vec::new();
@@ -240,9 +233,8 @@ fn set_ini_key(text: &[u8], section: &str, key: &str, value: &[u8]) -> Vec<u8> {
 
         if let Some(name) = section_name(trimmed) {
             // Leaving the section we wanted without having found the key:
-            // remember where it ended so the key goes in at the bottom of it
-            // rather than at the bottom of the file, under a heading that
-            // would put it in somebody else's section.
+            // remember where it ended, so the key goes in at the bottom of it
+            // rather than under somebody else's heading.
             if !done && current.as_deref() == Some(section.as_bytes()) && end_of_section.is_none() {
                 end_of_section = Some(out.len());
             }
@@ -306,9 +298,8 @@ fn is_key_line(trimmed: &[u8], key: &str) -> bool {
         .is_some_and(|at| trim(&trimmed[..at]) == key.as_bytes())
 }
 
-/// Both files quote the same way, which was settled by giving OpenRCT2's own
-/// `set-rct2` a directory whose name held each character and reading back
-/// what it wrote.
+/// Both files quote the same way, settled by giving OpenRCT2's own `set-rct2`
+/// a directory whose name held each character and reading back what it wrote.
 fn escape(value: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(value.len());
     for byte in value {
@@ -344,11 +335,9 @@ fn unescape(value: &[u8]) -> Vec<u8> {
     out
 }
 
-/// Sets a top level `key`, copying every other line through as it was.
-///
-/// Only a key at the start of a line is replaced. The same name indented
-/// under something else is a different setting, and rewriting it would move a
-/// value from one place in the document to another.
+/// Sets a top level `key`, copying every other line through as it was. Only a
+/// key at the start of a line is replaced: the same name indented under
+/// something else is a different setting.
 fn set_yaml_key(text: &[u8], key: &str, value: &[u8]) -> Vec<u8> {
     let ending = line_ending(text);
 
@@ -445,8 +434,6 @@ game_path = \"not this one\"
 
     #[test]
     fn every_other_line_survives_untouched() {
-        // This file is somebody's key bindings and language. Rewriting it
-        // from what we understand of it would drop everything we do not.
         let out = text(&set_ini_key(OPENRCT2, "general", "game_path", b"/new/rct2"));
         for line in text(OPENRCT2)
             .lines()
@@ -467,8 +454,6 @@ game_path = \"not this one\"
 
     #[test]
     fn a_missing_key_joins_its_section_rather_than_the_end_of_the_file() {
-        // Appended after [interface] it would be an interface setting, and
-        // OpenRCT2 would never read it.
         let out = text(&set_ini_key(
             b"[general]\nlanguage = en-US\n\n[interface]\ntoolbar = true\n",
             "general",
@@ -499,7 +484,6 @@ game_path = \"not this one\"
 
     #[test]
     fn an_empty_file_becomes_a_minimal_one() {
-        // Both games fill in every other default themselves on first run.
         let out = set_ini_key(b"", "general", "game_path", b"/rct2");
         assert_eq!(text(&out), "[general]\ngame_path = \"/rct2\"\n");
     }
@@ -518,9 +502,6 @@ game_path = \"not this one\"
 
     #[test]
     fn a_quote_or_a_backslash_in_the_path_is_escaped_the_way_openrct2_writes_it() {
-        // Checked against OpenRCT2 itself, by giving its own `set-rct2` a
-        // directory with each character in the name and reading back what it
-        // wrote.
         assert_eq!(escape(br#"/a "b" c"#), br#"/a \"b\" c"#.to_vec());
         assert_eq!(escape(br"/a\b"), br"/a\\b".to_vec());
     }
@@ -550,8 +531,6 @@ game_path = \"not this one\"
 
     #[test]
     fn a_file_with_windows_line_endings_keeps_them() {
-        // Mixing the two would show up as stray characters in an editor and
-        // as a needlessly enormous diff in anybody's backups.
         let out = set_ini_key(
             b"[general]\r\ngame_path = \"/old\"\r\n",
             "general",
@@ -579,9 +558,6 @@ language: en-GB
 
     #[test]
     fn an_indented_key_of_the_same_name_is_not_the_one_we_mean() {
-        // Nested under something else it is a different setting, and moving
-        // a value there would change the meaning of a document we do not
-        // otherwise understand.
         let out = text(&set_yaml_key(
             b"display:\n  loco_install_path: nested\nlanguage: en-GB\n",
             "loco_install_path",
@@ -603,8 +579,6 @@ language: en-GB
 
     #[test]
     fn an_empty_yaml_file_becomes_a_single_line() {
-        // What OpenLoco was actually given in testing, and it filled in the
-        // other hundred and seventy lines itself.
         let out = set_yaml_key(b"", "loco_install_path", b"/loco");
         assert_eq!(text(&out), "loco_install_path: \"/loco\"\n");
     }
@@ -629,8 +603,6 @@ language: en-GB
 
     #[test]
     fn a_value_openloco_wrote_unquoted_is_read_back_whole() {
-        // It writes the path bare when nothing in it needs quoting, so
-        // reading has to cope with both.
         let text_in = b"loco_install_path: /Users/someone/Game Data/locomotion\n";
         assert_eq!(
             read_yaml_key(text_in, "loco_install_path").as_deref(),
@@ -657,9 +629,6 @@ language: en-GB
 
     #[test]
     fn the_bytes_that_are_not_text_come_through_unchanged() {
-        // Decoding lossily and writing back would replace the owner face
-        // with question marks, which is somebody's setting quietly destroyed
-        // by a launcher that was only asked to record a path.
         let out = set_yaml_key(OPENLOCO_AFTER_RUNNING, "loco_install_path", b"/new/loco");
 
         assert!(
@@ -685,9 +654,6 @@ language: en-GB
 
     #[test]
     fn a_path_that_is_not_text_is_written_and_read_back_whole() {
-        // Paths are bytes on this platform. Going through a string would
-        // write a mangled one and point the game at a directory that does
-        // not exist.
         let path = b"/games/\xff\xfe/loco";
         let out = set_yaml_key(b"", "loco_install_path", path);
         assert_eq!(

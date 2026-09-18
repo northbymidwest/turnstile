@@ -1,16 +1,12 @@
 //! The Settings window, reached from the menu bar with Command-comma.
 //!
-//! It holds the settings that are about the application: keeping several
-//! versions on disk, and whether to look for a newer Turnstile at startup.
-//! The two that stay in the main window are there on purpose. "Automatically
-//! install updates" is stored per game, so it only means anything beside the
-//! game it applies to, and "show development versions" changes what the list
-//! in front of you displays, which would be odd to toggle from a window
-//! covering it.
+//! It holds the settings that are about the application. The two that stay in
+//! the main window are there on purpose: "automatically install updates" is
+//! stored per game, and "show development versions" changes what the list in
+//! front of you displays.
 //!
 //! One window, created once and reused. `NSWindow` released when closed would
-//! leave the controller holding a freed pointer, so this keeps it and hides it
-//! instead; reopening shows the same window with its state intact.
+//! leave the controller holding a freed pointer, so this hides it instead.
 
 use objc2::rc::Retained;
 use objc2::{MainThreadMarker, MainThreadOnly, sel};
@@ -28,9 +24,9 @@ pub struct Settings {
     pub window: Retained<NSWindow>,
     pub multi_version_check: Retained<NSButton>,
     pub check_updates_check: Retained<NSButton>,
-    /// Shows the chosen directory, or the word for "default" when there is
-    /// none. Not a text field: a path somebody typed would have to be
-    /// checked, created and explained, and the panel does all three.
+    /// Shows the chosen directory, or the word for "default". Not a text
+    /// field: a path somebody typed would have to be checked, created and
+    /// explained, and the panel does all three.
     pub install_root_label: Retained<NSTextField>,
 }
 
@@ -140,8 +136,7 @@ pub fn build(mtm: MainThreadMarker, actions: &Actions) -> Settings {
     root.addArrangedSubview(&directory_column);
 
     // No Resizable and no Miniaturizable: a settings sheet of two checkboxes
-    // has one correct size, and a minimised settings window is a way to lose
-    // it.
+    // has one correct size, and a minimised settings window is a way to lose it.
     let style = NSWindowStyleMask::Titled | NSWindowStyleMask::Closable;
     let frame = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(420.0, 330.0));
     // SAFETY: the designated initialiser for a window created from code.
@@ -156,11 +151,8 @@ pub fn build(mtm: MainThreadMarker, actions: &Actions) -> Settings {
     };
     window.setTitle(&NSString::from_str(&strings::get("Settings")));
     window.setContentView(Some(&root));
-    // Not released when closed: the controller holds this for the life of the
-    // process and shows it again on the next Command-comma. Released, that
-    // second show would message freed memory.
-    // SAFETY: the window must outlive its own close, because `Views` holds
-    // it for the life of the process and shows it again on the next
+    // SAFETY: the window must outlive its own close, because `Views` holds it
+    // for the life of the process and shows it again on the next
     // Command-comma. Released on close, that second show would message freed
     // memory.
     unsafe { window.setReleasedWhenClosed(false) };

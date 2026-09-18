@@ -1,17 +1,12 @@
-//! Everything interesting about the interface's behavior, with no AppKit
-//! anywhere near it. `UiState` holds what is on screen; `reduce` is the only
-//! thing allowed to change it, and it never touches the filesystem or the
-//! network itself: it returns `Effect`s for something else to carry out and
-//! report back through another `Msg`.
-//!
-//! Control enablement (`play_enabled` and friends) is always derived from
-//! state, never a separately-assigned flag: that is what makes it
-//! impossible for the play button and the busy spinner to disagree.
+//! The interface's behavior, with no AppKit anywhere near it. `UiState` holds
+//! what is on screen; `reduce` is the only thing allowed to change it, and it
+//! returns `Effect`s for something else to carry out and report back as
+//! another `Msg`. Control enablement is always derived from state, never a
+//! separately-assigned flag.
 //!
 //! Every effect that resolves a directory is tagged with the `generation`
 //! current when it was issued, and any reply carrying a stale generation is
-//! discarded. That is what stops switching games mid-fetch from populating
-//! the list with the other game's releases.
+//! discarded.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -31,19 +26,12 @@ pub struct ReleaseRow {
     pub channel: Channel,
 }
 
-/// Something is running. Present from the moment an operation is
-/// *initiated* until the last reply for it lands -- not from its first
-/// progress report, which is what it used to mean and which left every
-/// `!is_busy()` guard open for the whole pre-progress window (and open
-/// forever for `Activate`, `SwitchThenRemove` and `SetMode`, which report
-/// no progress at all). See `UiState::outstanding`.
+/// Something is running: present from the moment an operation is *initiated*
+/// until its last reply lands, not from its first progress report.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Busy {
-    /// What the worker last said it was doing, once it has said anything.
-    /// `None` before the first `Msg::Progress`, and for the whole of an
-    /// operation that never reports progress: the bar spins and the
-    /// download button keeps its ordinary (disabled) title rather than
-    /// claiming a phase that is not running.
+    /// What the worker last said it was doing. `None` before the first
+    /// `Msg::Progress`, and for the whole of an operation that reports none.
     pub status: Option<Status>,
     pub value: Option<f64>,
 }
@@ -52,44 +40,26 @@ pub struct Busy {
 pub struct Alert {
     pub title: String,
     pub message: String,
-    /// `true` when `message` names a localization key rather than holding
-    /// text to display verbatim.
-    ///
-    /// Almost every error here is some worker's failure, and its message is
-    /// whatever the store, the network or the operating system said, which
-    /// is not localizable and is shown as-is. The exception is an error the
-    /// reducer raises itself: it has no reported text, so it names a key and
-    /// `views::apply` looks it up, the same way it already looks up `title`.
-    /// `state.rs` must stay free of `strings.rs` -- that is what lets the
-    /// reducer be tested with no AppKit and no bundle around it -- so the
-    /// choice is made here and the lookup happens there.
+    /// `true` when `message` names a localization key rather than holding text
+    /// to display verbatim. `state.rs` must stay free of `strings.rs`, so the
+    /// choice is made here and `views::apply` does the lookup.
     pub message_is_key: bool,
-    /// The generation this error belongs to, for errors raised by
-    /// generation-gated work (`ReleasesLoaded`, `InstalledLoaded`,
-    /// `InstallFinished`, `Activated`, `Removed`, `ModeChanged`): a
-    /// generation bump makes these stale the same way it makes any other
-    /// reply from that work stale, so `bump_generation` clears them.
-    /// `None` for errors raised by work with no generation of its own
-    /// (`LaunchFinished` is the only one), which a generation bump must
-    /// leave alone, since toggling a channel or switching games has
-    /// nothing to do with whether the previous launch succeeded.
+    /// The generation this error belongs to, so `bump_generation` can clear it
+    /// along with everything else that generation's work produced. `None` for
+    /// errors raised by work with no generation (`LaunchFinished` alone).
     pub generation: Option<u64>,
-    /// The argument for `title`'s `{0}`, when it has one. This is data, not
-    /// formatted text: `state.rs` must stay free of `strings.rs`, which is
-    /// what lets the reducer be tested with no AppKit and no bundle around
-    /// it. `apply` is what actually substitutes it, via `strings::format1`.
-    /// `None` for every title but `FailedToLaunchGame`, the only one of the
-    /// seven error titles with a placeholder in it.
+    /// The argument for `title`'s `{0}`, as data rather than formatted text:
+    /// `apply` substitutes it via `strings::format1`. Only `FailedToLaunchGame`
+    /// has a placeholder.
     pub title_arg: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Pref {
     CheckForUpdates(bool),
-    /// Where the original games' data is unpacked. `None` is the default
-    /// root, which is why this is not simply a path: "the default" has to
-    /// survive a restart as a distinct answer from a path that happens to
-    /// equal today's default.
+    /// Where the original games' data is unpacked. `None` is the default root,
+    /// which has to survive a restart as an answer distinct from a path that
+    /// happens to equal today's default.
     InstallRoot(Option<String>),
     ShowDevelop(bool),
     AutoUpdate(bool),
@@ -102,76 +72,35 @@ pub struct UiState {
     pub selected_game: GameId,
     pub installed: Vec<Installed>,
     pub selected_installed: usize,
-    /// Whatever `VersionStore::active` reported. Deliberately vague: it does
-    /// not report the same *kind* of value in both modes -- `Installed::name`
-    /// (the on-disk identity) in multi-version mode, but `Installed::tag` (a
-    /// display label) in compatible mode, where the sole entry's `name` is
-    /// always the literal string `"bin"` and useless as an identifier.
-    /// Nothing outside `active_entry` may compare this field against
-    /// `Installed::name` or `Installed::tag` directly -- go through
-    /// `active_entry`, the one place that knows which of the two this is.
+    /// Whatever `VersionStore::active` reported: an `Installed::name` in
+    /// multi-version mode, an `Installed::tag` in compatible mode. Nothing
+    /// outside `active_entry` may compare it against either field directly.
     pub active: Option<String>,
     pub releases: Vec<ReleaseRow>,
-    /// Releases already fetched, so switching games does not ask GitHub
-    /// again. Keyed on both things that decide what a fetch returns: the
-    /// game, and whether development builds were included, since that second
-    /// one changes which repositories are queried rather than merely
-    /// filtering the result.
-    ///
-    /// Never invalidated. The unauthenticated API allows sixty requests an
-    /// hour and bouncing between two games spent one each time; a launcher is
-    /// open for a minute, so a release appearing mid-session is not worth a
-    /// request per switch. Quitting and reopening refetches.
+    /// Releases already fetched, keyed on both things that decide what a fetch
+    /// returns: the game, and whether development builds were included, since
+    /// that changes which repositories are queried rather than merely filtering
+    /// the result. Never invalidated; quitting and reopening refetches.
     release_cache: HashMap<(GameId, bool), Vec<ReleaseRow>>,
     pub selected_release: usize,
     pub show_develop: bool,
-    /// Whether to ask GitHub for a newer Turnstile at startup.
     pub check_for_updates: bool,
-    /// Where each original game's data was found, one slot per
-    /// `OriginalGame`. `None` means it is not installed, which is a state the
-    /// interface has to show rather than hide: OpenRCT2 without RollerCoaster
-    /// Tycoon 2's data starts and then fails.
+    /// Where each original game's data was found, one slot per `OriginalGame`.
     game_data: [Option<PathBuf>; 3],
     /// The chosen root for unpacking game data, or `None` for the default.
-    /// Held for the Settings window to show; the controller reads the same
-    /// preference when it needs the actual destination.
     pub install_root: Option<PathBuf>,
     /// The newer release, once one has been found and not yet dismissed.
-    /// `None` covers both "up to date" and "the check has not answered",
-    /// which the interface does not need to tell apart: neither shows a
-    /// banner.
     pub update: Option<turnstile_core::selfupdate::Update>,
-    /// Auto-update is a **per-game** preference (`autoInstallUpdates.
-    /// <gameKey>`, see `prefs.rs`), so the in-memory mirror is per game
-    /// too, one slot per `GameId::index`. It was a single game-less `bool`
-    /// and that is the shape of this project's worst class of defect:
-    /// `Msg::SelectGame` clears every game-scoped field and nothing ever
-    /// reloaded this one, so after a sidebar click `ReleasesLoaded` issued
-    /// an `Effect::Install` for the newly selected game on the strength of
-    /// the *previous* game's setting -- in compatible mode, over a build
-    /// the user deliberately kept.
-    ///
-    /// Private, and read only through `auto_update()`, which resolves it
-    /// against `selected_game`. That is what stops a future call site
-    /// picking the wrong game's slot; `show_develop` and `multi_version`
-    /// above are deliberately global and stay plain `bool`s.
+    /// Per game, mirroring the `autoInstallUpdates.<gameKey>` preference. Read
+    /// only through `auto_update()`, which resolves it against
+    /// `selected_game`, so no call site can pick the wrong game's slot.
     auto_update: [bool; GameId::ALL.len()],
     pub multi_version: bool,
     pub busy: Option<Busy>,
-    /// How many operations have been initiated in the current generation
-    /// and not yet reported back. `busy` is derived from this, and it is a
-    /// count rather than a flag because `Msg::ToggleMultiVersion` issues
-    /// one `SetMode` per game: clearing `busy` on the first `ModeChanged`
-    /// would re-open every guard while the second store is still
-    /// mid-rename.
-    ///
-    /// Every operation that increments this posts exactly one reply that
-    /// decrements it (`SwitchThenRemove` posts `Activated` *or* `Removed`,
-    /// never both), and `bump_generation` zeroes it unconditionally, which
-    /// is what keeps the UI from stranding in a permanently busy state if
-    /// a reply is ever lost. Do not weaken that: it has already happened
-    /// once on this branch and left the app inert with every control
-    /// disabled.
+    /// Initiated operations not yet reported back, from which `busy` is
+    /// derived. A count rather than a flag because `Msg::ToggleMultiVersion`
+    /// issues one `SetMode` per game. `bump_generation` zeroes it
+    /// unconditionally, so a lost reply cannot strand the UI busy.
     outstanding: u32,
     pub error: Option<Alert>,
     pub generation: u64,
@@ -179,17 +108,12 @@ pub struct UiState {
 }
 
 /// What `ClickRemove` decided, held until the modal answers. Both names are
-/// captured at click time and neither is ever re-derived afterwards:
-/// `NSAlert::runModal` pumps a nested run loop, so an `InstalledLoaded`
-/// already in flight can reshuffle `state.installed` while the dialog is
-/// open, and re-reading the selection on the way out would let that
-/// reshuffle redirect the operation at a different build than the one the
-/// dialog named.
+/// captured at click time: `NSAlert::runModal` pumps a nested run loop, so an
+/// `InstalledLoaded` already in flight can reshuffle `state.installed` while
+/// the dialog is open.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PendingRemoval {
-    /// The build to switch to first. See `switch_target`.
     activate: String,
-    /// The build to delete, once -- and only once -- the switch succeeded.
     remove: String,
 }
 
@@ -204,9 +128,8 @@ impl UiState {
             release_cache: HashMap::new(),
             selected_release: 0,
             show_develop: false,
-            // Defaults on. Somebody running an old build with a fixed bug in
-            // it is the case this exists for, and they are exactly the person
-            // who will not go looking for the setting.
+            // Somebody running an old build with a fixed bug in it is the
+            // case this exists for, and they will not go looking for it.
             check_for_updates: true,
             update: None,
             auto_update: [false; GameId::ALL.len()],
@@ -240,24 +163,15 @@ impl UiState {
         self.busy.is_some()
     }
 
-    /// The auto-update preference for the game currently selected, which is
-    /// the only one any decision here may act on. See the field.
     pub fn auto_update(&self) -> bool {
         self.auto_update[self.selected_game.index()]
     }
 
-    /// Sets one game's stored auto-update value. `controller::start` calls
-    /// this once per game at launch, from preferences, so a later game
-    /// switch needs no preference read and `reduce` stays pure;
-    /// `Msg::ToggleAutoUpdate` is the only other writer and writes the
-    /// selected game's slot.
     pub fn set_auto_update(&mut self, game: GameId, on: bool) {
         self.auto_update[game.index()] = on;
     }
 
-    /// The on-disk identity of the current selection: what `Activate`,
-    /// `SwitchThenRemove`, and the active-version comparison must use
-    /// instead of the display tag.
+    /// The on-disk identity of the current selection, never the display tag.
     fn selected_installed_name(&self) -> Option<&str> {
         self.installed
             .get(self.selected_installed)
@@ -271,10 +185,8 @@ impl UiState {
     }
 
     /// The installed entry `self.active` refers to, resolved the correct way
-    /// for whichever mode is current -- see `active`'s own doc comment for
-    /// why that distinction exists. This is the only place allowed to
-    /// compare `self.active` against `Installed::name` or `Installed::tag`
-    /// directly; everything else goes through this.
+    /// for whichever mode is current. The only place allowed to compare
+    /// `self.active` against `Installed::name` or `Installed::tag`.
     pub(crate) fn active_entry(&self) -> Option<&Installed> {
         let active = self.active.as_deref()?;
         self.installed
@@ -301,15 +213,10 @@ impl UiState {
     }
 
     /// Remove deletes whatever the popup is showing, which is always the
-    /// active version: `SelectInstalled` activates whatever was just
-    /// picked, and `InstalledLoaded` puts the selection back on the active
-    /// entry on every reload. So there is deliberately no "selected differs
-    /// from active" condition here -- one was tried, and because of those
-    /// two rules it was never satisfiable, which left the button greyed out
-    /// forever. The active version is instead made removable by switching
-    /// away from it first (see `switch_target` and
-    /// `Effect::SwitchThenRemove`), which is why two installed versions are
-    /// the real requirement: with one there is nothing to switch to.
+    /// active version. It is made removable by switching away from it first
+    /// (see `switch_target` and `Effect::SwitchThenRemove`), which is why two
+    /// installed versions are the requirement: with one there is nothing to
+    /// switch to.
     pub fn remove_enabled(&self) -> bool {
         !self.is_busy() && self.multi_version && self.installed.len() > 1
     }
@@ -323,18 +230,13 @@ impl UiState {
 pub enum Msg {
     SelectGame(GameId),
     /// The answer to `Effect::CheckForUpdate`. `Ok(None)` means up to date.
-    ///
-    /// No error case. A failed check produces nothing: no network, a rate
-    /// limit, a malformed reply, all mean the banner does not appear. An
-    /// update notice that can raise an error is a worse application than one
-    /// that occasionally fails to notice.
+    /// There is no error case: a failed check produces nothing, because an
+    /// update notice that can raise an error is worse than one that
+    /// occasionally fails to notice.
     UpdateChecked(Option<turnstile_core::selfupdate::Update>),
-    /// The user dismissed the banner, or followed it.
     DismissUpdate,
     OpenUpdatePage,
     ToggleCheckForUpdates(bool),
-    /// Open the Settings window. Nothing to reduce: the window is a view, and
-    /// `views::apply` already keeps its checkboxes in step with state.
     ShowSettings,
     SelectInstalled(usize),
     SelectRelease(usize),
@@ -377,13 +279,10 @@ pub enum Msg {
     LaunchFinished {
         result: Result<(), String>,
     },
-    /// Where each original game's data is, as found on disk. Sent at
-    /// startup and again after an install.
+    /// Where each original game's data is, as found on disk.
     GameDataScanned(Vec<(OriginalGame, Option<PathBuf>)>),
-    /// The user asked to install one game's data; the file picker follows.
     ChooseInstaller(OriginalGame),
-    /// The picker came back with a file. `None` is a cancelled picker, which
-    /// is not a failure and produces nothing.
+    /// `None` is a cancelled picker, which is not a failure.
     InstallerChosen {
         game: OriginalGame,
         installer: Option<PathBuf>,
@@ -393,15 +292,11 @@ pub enum Msg {
         game: OriginalGame,
         result: Result<PathBuf, String>,
     },
-    /// The user asked to change where game data is unpacked.
     ChooseInstallRoot,
-    /// A new root, or `None` to go back to the default.
     InstallRootChosen(Option<PathBuf>),
     /// `VersionStore::reconcile` failed for at least one game at launch.
-    /// Posted once, after the first `SelectGame`, by `controller::start`:
-    /// the repair runs before any generation exists, so it cannot report
-    /// itself as the reply to anything, and `reduce` is still the only
-    /// thing allowed to write `UiState`.
+    /// Posted by `controller::start` after the first `SelectGame`, since the
+    /// repair runs before any generation exists.
     StartupRepairFailed {
         message: String,
     },
@@ -409,19 +304,13 @@ pub enum Msg {
 
 #[derive(Debug)]
 pub enum Effect {
-    /// Ask whether a newer Turnstile has been published.
-    ///
-    /// No generation, unlike every other network effect here. Those answer a
-    /// question about the selected game, so switching games makes the reply
-    /// meaningless; this one is about the application, and nothing the user
-    /// does while it is in flight can make the answer wrong.
+    /// Ask whether a newer Turnstile has been published. No generation, unlike
+    /// every other network effect: this one is about the application, and
+    /// nothing the user does while it is in flight can make the answer wrong.
     CheckForUpdate,
-    /// Bring the Settings window forward. A view concern rather than state:
-    /// there is one window, built at startup, and this shows it.
     ShowSettings,
-    /// Open a URL in the browser. The update banner is the only thing that
-    /// wants it: replacing a running, notarized bundle in place is a
-    /// different feature with real ways to leave somebody with no app.
+    /// Open a URL in the browser. The update banner is the only caller:
+    /// replacing a running, notarized bundle in place is a different feature.
     OpenUrl(String),
     LoadInstalled {
         generation: u64,
@@ -429,15 +318,12 @@ pub enum Effect {
     },
     /// Look on disk for each original game's data.
     ScanGameData,
-    /// Ask for an installer to read. The reply is `Msg::InstallerChosen`,
-    /// including when the picker is cancelled.
+    /// The reply is `Msg::InstallerChosen`, including when cancelled.
     PickInstaller(OriginalGame),
-    /// Ask for a directory to unpack game data into.
     PickInstallRoot,
-    /// Unpack `installer` and point the game at the result. The destination
-    /// is resolved where the effect is performed, from the same preference
-    /// the Settings window shows, rather than carried here: the reducer has
-    /// no filesystem and the default root is not a fact it holds.
+    /// Unpack `installer` and point the game at the result. The destination is
+    /// resolved where the effect is performed, since the reducer has no
+    /// filesystem and the default root is not a fact it holds.
     InstallGameData {
         generation: u64,
         game: OriginalGame,
@@ -453,27 +339,20 @@ pub enum Effect {
         game: GameId,
         tag: String,
     },
-    /// `name` is `Installed::name`, the on-disk identity, never the
-    /// display tag: `VersionStore::activate` takes exactly this and
-    /// nothing else, by contract.
+    /// `name` is `Installed::name`, the on-disk identity, never the display
+    /// tag: `VersionStore::activate` takes exactly this, by contract.
     Activate {
         generation: u64,
         game: GameId,
         name: String,
     },
-    /// Switch to `activate`, then -- only if that switched for real --
-    /// delete `remove`. One effect rather than two because the ordering
-    /// between them is the whole point: `VersionStore::remove` refuses to
-    /// delete the active version (`StoreError::RemoveActive`), which is the
-    /// last thing standing between a mistake here and a `bin` symlink
-    /// pointing at a directory that no longer exists. Splitting this into
-    /// an `Activate` whose reply triggers a `Remove` would put a main-loop
-    /// turn between them, during which any other message -- another
-    /// `Activated` from the popup, most obviously -- could pair the wrong
-    /// two halves together.
+    /// Switch to `activate`, then -- only if that switched for real -- delete
+    /// `remove`. One effect rather than two because the ordering is the whole
+    /// point: `VersionStore::remove` refuses to delete the active version, and
+    /// splitting this would put a main-loop turn between the halves, during
+    /// which another message could pair the wrong two together.
     ///
-    /// Both names carry the same identity contract as `Activate`:
-    /// `Installed::name`, never the display `tag`.
+    /// Both names carry the same identity contract as `Activate`.
     SwitchThenRemove {
         generation: u64,
         game: GameId,
@@ -495,25 +374,17 @@ pub enum Effect {
     },
     ShowDisableReport(DisableReport),
     SavePref(Pref),
-    /// A generation bump means whatever was running for the old generation
-    /// is now irrelevant. `generation` is the generation being abandoned
-    /// (the one current before the bump), not the new one.
+    /// `generation` is the one being abandoned, not the new one.
     ///
-    /// The controller's executor holds one cancel flag per in-flight
-    /// install, never shared across installs, and sets whichever one is
-    /// currently stored -- a no-op if nothing is running. Because each
-    /// install's flag is its own, this cannot un-cancel a different install
-    /// the way a single shared flag could. It does not branch on
-    /// `generation` to do that (one flag slot is enough), so this field is
-    /// read only by this module's own tests, which check that the abandoned
-    /// generation -- not the new one -- is what gets reported.
+    /// The executor holds one cancel flag per in-flight install and sets
+    /// whichever is currently stored, so it does not branch on `generation`;
+    /// only this module's tests read the field.
     CancelInFlight {
         #[allow(dead_code)]
         generation: u64,
     },
 }
 
-/// All the interesting behavior, with no AppKit anywhere near it.
 pub fn reduce(state: &mut UiState, msg: Msg) -> Vec<Effect> {
     match msg {
         Msg::SelectGame(game) => {
@@ -535,8 +406,8 @@ pub fn reduce(state: &mut UiState, msg: Msg) -> Vec<Effect> {
                 },
             ];
             // Switching back to a game already looked at asks GitHub nothing.
-            // Through `adopt_releases` rather than by assigning, so a cache
-            // hit still evaluates auto-update.
+            // Through `adopt_releases` rather than by assigning, so a cache hit
+            // still evaluates auto-update.
             match cached(state, game, state.show_develop) {
                 Some(rows) => effects.extend(adopt_releases(state, rows)),
                 None => effects.push(Effect::FetchReleases {
@@ -550,12 +421,9 @@ pub fn reduce(state: &mut UiState, msg: Msg) -> Vec<Effect> {
 
         Msg::SelectInstalled(index) => {
             // Refused outright while something is in flight, rather than
-            // moving the selection and declining only the activation: the
-            // popup always shows the active version, so a selection that
-            // moved without activating would be a lie about what is
-            // running. `views::apply` runs after every reduce and puts the
-            // popup back on `selected_installed`, so the refusal is not
-            // visible as a stuck control.
+            // moving the selection and declining only the activation: the popup
+            // always shows the active version, so a selection that moved
+            // without activating would be a lie about what is running.
             if state.is_busy() {
                 return Vec::new();
             }
@@ -563,13 +431,10 @@ pub fn reduce(state: &mut UiState, msg: Msg) -> Vec<Effect> {
             let Some(name) = state.selected_installed_name().map(str::to_string) else {
                 return Vec::new();
             };
-            // Selecting *is* switching, but only where switching exists.
-            //
-            // The comparison routes through `active_entry` rather than reading
-            // `state.active` directly. It would be correct either way here --
-            // the `multi_version` guard is what makes `active` a name in this
-            // branch -- but that is a fact a reader has to re-derive, and
-            // re-deriving it per site is precisely how this went wrong twice.
+            // Selecting *is* switching, but only where switching exists. The
+            // comparison routes through `active_entry` rather than reading
+            // `state.active`, which is a fact a reader would otherwise have to
+            // re-derive per site.
             if state.multi_version
                 && state.active_entry().map(|e| e.name.as_str()) != Some(name.as_str())
             {
@@ -591,8 +456,7 @@ pub fn reduce(state: &mut UiState, msg: Msg) -> Vec<Effect> {
 
         Msg::UpdateChecked(found) => {
             // Only when the check is still wanted: the setting can be turned
-            // off while the request is in flight, and a banner arriving after
-            // that would be the setting failing to mean anything.
+            // off while the request is in flight.
             if state.check_for_updates {
                 state.update = found;
             }
@@ -619,8 +483,7 @@ pub fn reduce(state: &mut UiState, msg: Msg) -> Vec<Effect> {
 
         Msg::ToggleCheckForUpdates(on) => {
             state.check_for_updates = on;
-            // Turning it off takes down a banner already showing. Leaving one
-            // up would be the setting not applying to what is on screen.
+            // Turning it off takes down a banner already showing.
             if !on {
                 state.update = None;
             }
@@ -638,8 +501,7 @@ pub fn reduce(state: &mut UiState, msg: Msg) -> Vec<Effect> {
             ];
             // Cached per channel choice as well as per game, because turning
             // development builds on queries a second repository rather than
-            // filtering what the first returned. So each of the two states is
-            // fetched once and then toggling between them is free.
+            // filtering what the first returned.
             match cached(state, state.selected_game, on) {
                 Some(rows) => effects.extend(adopt_releases(state, rows)),
                 None => effects.push(Effect::FetchReleases {
@@ -652,16 +514,10 @@ pub fn reduce(state: &mut UiState, msg: Msg) -> Vec<Effect> {
         }
 
         Msg::ToggleAutoUpdate(on) => {
-            // The selected game's slot, and nothing else: the preference is
-            // per game on disk (`autoInstallUpdates.<gameKey>`) and the
-            // `SavePref` below is written under the same
-            // `state.selected_game` by `controller::perform`.
             state.set_auto_update(state.selected_game, on);
             let mut effects = vec![Effect::SavePref(Pref::AutoUpdate(on))];
             // The preference is saved either way; only the install it would
-            // trigger waits. Something is already running against this
-            // game's store, and whatever it is, the next `ReleasesLoaded`
-            // re-evaluates this with the setting now on.
+            // trigger waits. The next `ReleasesLoaded` re-evaluates this.
             if on
                 && !state.is_busy()
                 && let Some(tag) = newest_installable(state)
@@ -677,19 +533,13 @@ pub fn reduce(state: &mut UiState, msg: Msg) -> Vec<Effect> {
         }
 
         Msg::ToggleMultiVersion(on) => {
-            // Refused while anything is in flight, and refused here rather
-            // than relying on the checkbox being disabled. This is the one
-            // toggle that issues store operations -- renames of `bin` and
-            // of whole version directories -- and `Effect::CancelInFlight`
-            // cannot stop one: the cancel flag is read by `download.rs`
-            // alone, never by the store. A second toggle arriving mid-rename
-            // therefore aims two workers at the same `bin`; `storelock` is
-            // what stops them being inside it at once, and this guard is
-            // what stops the app claiming to be doing both, which is a
-            // separate obligation and not one a lock can meet.
-            // `views::apply` runs after every reduce, so the checkbox snaps
-            // back to `state.multi_version` instead of showing a value that
-            // was not acted on.
+            // Refused here rather than relying on the checkbox being disabled.
+            // This is the one toggle that issues store operations -- renames of
+            // `bin` and of whole version directories -- and
+            // `Effect::CancelInFlight` cannot stop one: the cancel flag is read
+            // by `download.rs` alone. `storelock` stops two workers being
+            // inside the same store at once; this stops the app claiming to be
+            // doing both, which a lock cannot do.
             if state.is_busy() {
                 return Vec::new();
             }
@@ -709,8 +559,8 @@ pub fn reduce(state: &mut UiState, msg: Msg) -> Vec<Effect> {
                     multi_version: on,
                 });
             }
-            // After the bump, which zeroes the count: one operation per
-            // game, so `busy` holds until the last `ModeChanged` lands.
+            // After the bump, which zeroes the count: one operation per game,
+            // so `busy` holds until the last `ModeChanged` lands.
             begin(state, GameId::ALL.len() as u32);
             effects
         }
@@ -741,13 +591,9 @@ pub fn reduce(state: &mut UiState, msg: Msg) -> Vec<Effect> {
         }
 
         Msg::ClickRemove => {
-            // Cleared first, on every path out of this arm. Cancelling the
-            // dialog is simply the absence of a `ConfirmRemove`, so a
-            // cancelled removal otherwise leaves its pair sitting here; no
-            // route to `ConfirmRemove` exists except a dialog this arm has
-            // just re-armed, but leaving a stale deletion target in the
-            // state and relying on that is the sort of thing that stops
-            // being true later.
+            // Cleared on every path out of this arm. Cancelling the dialog is
+            // simply the absence of a `ConfirmRemove`, so a cancelled removal
+            // would otherwise leave its pair sitting here.
             state.pending_removal = None;
             if !state.remove_enabled() {
                 return Vec::new();
@@ -767,14 +613,10 @@ pub fn reduce(state: &mut UiState, msg: Msg) -> Vec<Effect> {
         }
 
         // The pair is taken on every path, including the refusal: a
-        // confirmation that is not acted on must not stay armed for a
-        // later one to pick up.
-        //
-        // `is_busy()` is re-checked here and not only at `ClickRemove`,
-        // because `NSAlert::runModal` pumps a nested run loop: messages
-        // really are delivered between the click and the answer, so
-        // `remove_enabled()` holding at click time does not mean it still
-        // holds now.
+        // confirmation that is not acted on must not stay armed for a later
+        // one. `is_busy()` is re-checked here and not only at `ClickRemove`,
+        // because `NSAlert::runModal` pumps a nested run loop: messages really
+        // are delivered between the click and the answer.
         Msg::ConfirmRemove => match state.pending_removal.take() {
             Some(pending) if !state.is_busy() => {
                 begin(state, 1);
@@ -786,30 +628,12 @@ pub fn reduce(state: &mut UiState, msg: Msg) -> Vec<Effect> {
                 }]
             }
             // Refused, and *said* so. The user answered a destructive
-            // confirmation and is entitled to know that nothing happened:
-            // `remove_enabled()` does not depend on `auto_update`, so with
-            // auto-update on a `ReleasesLoaded` delivered through the
-            // modal's nested run loop starts an install of its own and lands
-            // the confirmation here. Silently returning no effects left the
-            // Remove button working, the dialog answered, the build still
-            // installed, and nothing on screen to explain any of it; the
-            // only recourse was to click Remove again and guess.
-            //
-            // Generation-scoped, like every other error raised while this
-            // generation's work is in flight: switching games or toggling a
-            // channel dismisses it, which is right, because the operation it
-            // was refused in favour of is abandoned by the same bump. The
-            // install it is refused in favour of will also clear it when it
-            // succeeds, which is the documented edge of the
-            // `Option<generation>` error class rather than a decision made
-            // here -- and in this one case the clear is defensible, since by
-            // then the refusal's reason has gone and Remove works again.
-            //
-            // `title` is deliberately the same `FailedToRemoveVersion` a
-            // failed removal shows: from the user's side the outcome is the
-            // same (the version was not removed) and the reason belongs in
-            // the message, which is where every other banner in the app puts
-            // it.
+            // confirmation and is entitled to know that nothing happened;
+            // returning no effects silently left the dialog answered, the build
+            // still installed, and nothing on screen to explain it. The title
+            // is the same one a failed removal shows, because from the user's
+            // side the outcome is the same and the reason belongs in the
+            // message.
             Some(_) => {
                 state.error = Some(Alert {
                     title: "FailedToRemoveVersion".into(),
@@ -820,11 +644,6 @@ pub fn reduce(state: &mut UiState, msg: Msg) -> Vec<Effect> {
                 });
                 Vec::new()
             }
-            // Nothing was armed, so nothing was refused and there is
-            // nothing to report: this is a `ConfirmRemove` with no dialog
-            // behind it, which `Msg::ClickRemove`'s disarming makes
-            // unreachable today and which must stay silent if it ever is
-            // not.
             None => Vec::new(),
         },
 
@@ -834,11 +653,9 @@ pub fn reduce(state: &mut UiState, msg: Msg) -> Vec<Effect> {
             }
             match result {
                 Ok((installed, active)) => {
-                    // `installed`/`active` are the freshly loaded values,
-                    // not yet in `state`, so `active_entry` (which reads
-                    // `state.installed`/`state.active`) cannot be used here;
-                    // `is_active` is the same mode-aware comparison it uses
-                    // internally, applied to these local values instead.
+                    // `installed`/`active` are not in `state` yet, so
+                    // `active_entry` cannot be used here; `is_active` is the
+                    // same mode-aware comparison applied to the local values.
                     state.selected_installed = active
                         .as_deref()
                         .and_then(|a| {
@@ -887,17 +704,11 @@ pub fn reduce(state: &mut UiState, msg: Msg) -> Vec<Effect> {
             Vec::new()
         }
 
-        // Only ever *updates* a busy state an initiated operation already
-        // established; it never creates one. Setting `busy` here was the
-        // whole of the old behaviour, which is why every `!is_busy()` guard
-        // stood open until the first report arrived -- seconds into an
-        // install, and forever for the operations that report nothing.
-        //
-        // The `outstanding` test is belt and braces rather than load
-        // bearing: the main queue is FIFO, so a worker's last `Progress` is
-        // always delivered before the reply that ends it. It costs one
-        // comparison to make a lost or reordered report unable to strand
-        // the UI busy with nothing running.
+        // Only ever *updates* a busy state an initiated operation established;
+        // it never creates one. The `outstanding` test is belt and braces --
+        // the main queue is FIFO -- but it costs one comparison to make a lost
+        // or reordered report unable to strand the UI busy with nothing
+        // running.
         Msg::Progress {
             generation,
             status,
@@ -960,12 +771,9 @@ pub fn reduce(state: &mut UiState, msg: Msg) -> Vec<Effect> {
                 }
             }
             // Reloads on the failure path too, which `finish` deliberately
-            // does not. A removal is the one operation that can fail after
-            // already having changed what is on disk: the delete is only
-            // ever attempted once the switch away from the active version
-            // has succeeded, so a failed delete still leaves `bin` pointing
-            // somewhere new. Without this reload the popup would go on
-            // showing the old build as the active one.
+            // does not. The delete is only attempted once the switch away from
+            // the active version succeeded, so a failed delete still leaves
+            // `bin` pointing somewhere new.
             vec![Effect::LoadInstalled {
                 generation: state.generation,
                 game: state.selected_game,
@@ -1002,13 +810,6 @@ pub fn reduce(state: &mut UiState, msg: Msg) -> Vec<Effect> {
             }
         }
 
-        // Scoped to the current generation, which is the one the initial
-        // `SelectGame` just established, so the next game switch or channel
-        // toggle clears it the same way it clears a failed read of the same
-        // store. Deliberately *not* `generation: None`: that class belongs
-        // to `LaunchFinished` alone, and `LaunchFinished`'s `Ok` arm clears
-        // every error in it, so borrowing it here would let a successful
-        // launch dismiss an unrelated repair failure the user had not read.
         Msg::GameDataScanned(found) => {
             for (game, path) in found {
                 state.game_data[UiState::data_slot(game)] = path;
@@ -1019,8 +820,6 @@ pub fn reduce(state: &mut UiState, msg: Msg) -> Vec<Effect> {
         Msg::ChooseInstaller(game) => vec![Effect::PickInstaller(game)],
 
         Msg::InstallerChosen { game, installer } => {
-            // A cancelled picker is the ordinary way out of one, not a
-            // failure worth a message or a spinner.
             let Some(installer) = installer else {
                 return Vec::new();
             };
@@ -1069,8 +868,7 @@ pub fn reduce(state: &mut UiState, msg: Msg) -> Vec<Effect> {
                 Effect::SavePref(Pref::InstallRoot(
                     root.map(|path| path.to_string_lossy().into_owned()),
                 )),
-                // Where the data is depends on where it is unpacked, so the
-                // answer on screen is stale the moment this changes.
+                // Where the data is depends on where it is unpacked.
                 Effect::ScanGameData,
             ]
         }
@@ -1089,16 +887,10 @@ pub fn reduce(state: &mut UiState, msg: Msg) -> Vec<Effect> {
         Msg::LaunchFinished { result } => {
             match result {
                 Ok(()) => {
-                    // The mirror image of bump_generation: that clears
-                    // only generation-scoped errors and leaves a launch
-                    // error alone; this clears only a launch error
-                    // (generation: None) and leaves a generation-scoped
-                    // one alone. A launch carries no generation of its
-                    // own, so nothing else ever clears a launch error --
-                    // a fresh success has to -- but it must not also
-                    // dismiss an unrelated fetch or install error the
-                    // user hasn't read yet. Each event clears exactly the
-                    // error class it owns.
+                    // Each event clears exactly the error class it owns. A
+                    // launch carries no generation of its own, so nothing else
+                    // ever clears a launch error -- but this must not dismiss
+                    // an unrelated one the user has not read.
                     if state.error.as_ref().is_some_and(|a| a.generation.is_none()) {
                         state.error = None;
                     }
@@ -1121,21 +913,13 @@ pub fn reduce(state: &mut UiState, msg: Msg) -> Vec<Effect> {
 /// Records that `count` operations have just been initiated, so every
 /// `!is_busy()` guard closes *now* rather than whenever the first progress
 /// report happens to arrive. Called in the same arm that emits the effects,
-/// never anywhere else: an increment with no effect behind it is an
-/// operation that never replies, and `busy` would stay set until the next
-/// generation bump.
+/// never anywhere else: an increment with no effect behind it is an operation
+/// that never replies.
 ///
-/// The `Busy` it establishes carries no status, because at this point
-/// nothing has said what it is doing yet; `Msg::Progress` fills that in for
-/// the one operation that reports any.
-///
-/// Deliberately not called for `Effect::Launch`. A launch reports back as
-/// `Msg::LaunchFinished`, the one reply with no generation of its own, so
-/// it cannot be reconciled with a count that a generation bump zeroes: a
-/// bump followed by a new operation and then a late `LaunchFinished` would
-/// decrement someone else's count and clear `busy` with work still
-/// running. `play_enabled` already refuses to start a launch while busy,
-/// which is the guard that actually matters here.
+/// Deliberately not called for `Effect::Launch`, whose reply carries no
+/// generation of its own and so cannot be reconciled with a count that a
+/// generation bump zeroes. `play_enabled` already refuses to start a launch
+/// while busy.
 fn begin(state: &mut UiState, count: u32) {
     state.outstanding += count;
     if state.busy.is_none() {
@@ -1148,15 +932,11 @@ fn begin(state: &mut UiState, count: u32) {
 
 /// One initiated operation has reported back, successfully or not. `busy`
 /// clears only when the last outstanding one does: `Msg::ToggleMultiVersion`
-/// issues one `SetMode` per game, so two `ModeChanged` replies arrive for a
-/// single initiation, and clearing on the first would re-open every guard
-/// while the second store is still mid-rename.
+/// issues one `SetMode` per game, so clearing on the first reply would re-open
+/// every guard while the second store is still mid-rename.
 ///
-/// `saturating_sub` rather than `-= 1` so a reply that somehow outlives its
-/// count cannot wrap the counter to `u32::MAX` and leave the UI permanently
-/// busy. Every caller is already behind a generation check, and
-/// `bump_generation` zeroes the count, so this should not be reachable; the
-/// failure it would cause is bad enough to be worth one saturating call.
+/// `saturating_sub` so a reply that somehow outlives its count cannot wrap the
+/// counter and leave the UI permanently busy.
 fn end(state: &mut UiState) {
     state.outstanding = state.outstanding.saturating_sub(1);
     if state.outstanding == 0 {
@@ -1166,32 +946,19 @@ fn end(state: &mut UiState) {
 
 /// Advances to a new generation, returning the one being abandoned so the
 /// caller can tell the executor to cancel whatever was running under it.
-/// Also clears `busy` and the outstanding count unconditionally, since they
-/// always describe in-flight work tied to the old generation, and every
-/// reply that would otherwise clear them is itself gated on a generation
-/// match, so nothing else ever would. **This is what makes setting `busy`
-/// at initiation safe rather than a way to wedge the app**: an operation
-/// whose reply is discarded as stale would otherwise leave every control
-/// disabled forever, which has already happened once on this branch. Do not
-/// make either reset conditional.
 ///
-/// It does not stop the abandoned work itself. `Effect::CancelInFlight`
-/// reaches a download; nothing reaches a store operation already mid-rename.
-/// So clearing `busy` here really does re-open every `!is_busy()` guard
-/// while an abandoned store operation is still running, and the app really
-/// will let a new one be *initiated* in that window -- three clicks reach
-/// it, the second being a sidebar click, since the sidebar table is the one
-/// control never disabled. What it cannot do is let the two run *together*:
-/// every store operation runs under one lock (`storelock`), taken on the
-/// worker and held for the operation's whole duration, so the new one waits
-/// for the abandoned one to finish. Closing the UI-level window instead
-/// would mean refusing to switch games during an install, which this app
-/// deliberately allows and cancels instead.
+/// Clears `busy` and the outstanding count unconditionally: every reply that
+/// would otherwise clear them is itself gated on a generation match, so an
+/// operation whose reply is discarded as stale would leave every control
+/// disabled forever. Do not make either reset conditional.
 ///
-/// `error` is cleared only when it is generation-scoped: a launch
-/// error (`Alert::generation` is `None`) has nothing to do with switching
-/// games or toggling a channel, and clearing it here would erase it before
-/// the user has read it.
+/// It does not stop the abandoned work itself, so a new operation really can
+/// be *initiated* while an abandoned store operation is still running. What it
+/// cannot do is let the two run *together*: every store operation runs under
+/// one lock (`storelock`), so the new one waits.
+///
+/// `error` is cleared only when it is generation-scoped; a launch error has
+/// nothing to do with switching games.
 fn bump_generation(state: &mut UiState) -> u64 {
     let previous = state.generation;
     state.generation += 1;
@@ -1238,14 +1005,9 @@ fn finish(
     }
 }
 
-/// Is `entry` the one `active` (as `VersionStore::active` reports it, in
-/// whichever mode is current) refers to? See `UiState::active`'s doc comment
-/// for why this cannot be a plain `==`: `active` is an `Installed::name` in
-/// multi-version mode but an `Installed::tag` in compatible mode. This is
-/// the one place that knows that distinction; `UiState::active_entry` and
-/// every reducer arm that needs the same comparison on values not yet
-/// stored in `state` (`InstalledLoaded`, below) go through this instead of
-/// picking a field directly.
+/// Is `entry` the one `active` refers to? See `UiState::active`: this cannot
+/// be a plain `==`, because `active` is an `Installed::name` in multi-version
+/// mode but an `Installed::tag` in compatible mode.
 fn is_active(entry: &Installed, active: &str, multi_version: bool) -> bool {
     if multi_version {
         entry.name == active
@@ -1255,16 +1017,9 @@ fn is_active(entry: &Installed, active: &str, multi_version: bool) -> bool {
 }
 
 /// Which build to switch to before `name` can be deleted: the newest other
-/// installed version, or `None` when there is no other one.
-///
-/// "Newest" is `VersionStore::installed`'s own order, not a re-sort here:
-/// `installed_multi` reads each directory's modification time and sorts by
-/// `Reverse(modified)`, so entry zero is the most recently written build
-/// and the first entry with a different `name` is the newest other one.
-/// Compares `name`, never `tag`: two installed entries can share a display
-/// tag, and switching to the wrong one of those would leave the build the
-/// user asked to delete still active, which `VersionStore::remove` would
-/// then refuse.
+/// installed version, or `None` when there is no other one. "Newest" is
+/// `VersionStore::installed`'s own order rather than a re-sort here. Compares
+/// `name`, never `tag`: two installed entries can share a display tag.
 fn switch_target(state: &UiState, name: &str) -> Option<String> {
     state
         .installed
@@ -1274,24 +1029,15 @@ fn switch_target(state: &UiState, name: &str) -> Option<String> {
 }
 
 /// Takes a set of releases as the current ones, from a fetch or from the
-/// cache, and returns whatever that implies.
-///
-/// Both paths go through here on purpose. Auto-update is evaluated when
-/// releases arrive, so a cache hit that merely assigned `state.releases`
-/// would silently stop auto-update from ever firing on a game switch: two
-/// correct-looking rules composing into a gap neither owns.
+/// cache, and returns whatever that implies. Both paths go through here on
+/// purpose: a cache hit that merely assigned `state.releases` would silently
+/// stop auto-update from ever firing on a game switch.
 fn adopt_releases(state: &mut UiState, rows: Vec<ReleaseRow>) -> Vec<Effect> {
     state.releases = rows;
     state.selected_release = 0;
-    // `auto_update()` resolves against `state.selected_game`, so this can
-    // only ever act on the setting stored for the game whose releases these
-    // are.
-    //
-    // No `is_busy()` guard, unlike the arms a user drives. This is not a
-    // click to be distrusted, and refusing it would mean auto-update quietly
-    // not updating for the rest of the session, since nothing re-runs it.
-    // `outstanding` is a count precisely so a second operation overlapping a
-    // first is accounted for rather than losing one of the two clears.
+    // No `is_busy()` guard, unlike the arms a user drives. This is not a click
+    // to be distrusted, and refusing it would mean auto-update quietly not
+    // updating for the rest of the session, since nothing re-runs it.
     if state.auto_update()
         && let Some(tag) = newest_installable(state)
     {
@@ -1305,19 +1051,14 @@ fn adopt_releases(state: &mut UiState, rows: Vec<ReleaseRow>) -> Vec<Effect> {
     Vec::new()
 }
 
-/// The releases for a game and channel choice if they have been fetched
-/// already, so the caller can skip the request.
 fn cached(state: &UiState, game: GameId, include_develop: bool) -> Option<Vec<ReleaseRow>> {
     state.release_cache.get(&(game, include_develop)).cloned()
 }
 
 /// The newest listed release's tag, unless it is already the one active.
-/// Compares the release's tag against the *tag* of whichever installed
-/// entry currently matches `active`, rather than comparing the release tag
-/// directly against `active`: in multi-version mode `active` is an identity
-/// (`Installed::name`), not a tag, and even where it is a tag (compatible
-/// mode) a directory renamed to resolve a collision keeps its original tag,
-/// so only a tag-to-tag comparison is meaningful here.
+/// Tag-to-tag: `active` is an identity rather than a tag in multi-version
+/// mode, and a directory renamed to resolve a collision keeps its original
+/// tag.
 fn newest_installable(state: &UiState) -> Option<String> {
     let newest = state.releases.first()?;
     let active_tag = state.active_entry().map(|i| i.tag.as_str());
@@ -1337,12 +1078,7 @@ mod tests {
     }
 
     /// Like `installed`, but lets a test give `name` and `tag` different
-    /// values -- the one axis `installed` itself cannot express, and the
-    /// one this whole project treats as its worst-bug hazard (see
-    /// `Installed`'s own doc comment in `turnstile-core`). Every test that
-    /// only calls `installed` is silently unable to catch a bug that
-    /// conflates the two; a handful below use this instead specifically to
-    /// close that gap.
+    /// values -- the one axis `installed` itself cannot express.
     fn installed_named(tag: &str, name: &str, can_launch: bool) -> Installed {
         Installed {
             tag: tag.to_string(),
@@ -1370,9 +1106,6 @@ mod tests {
 
     #[test]
     fn a_check_that_answers_after_the_setting_was_turned_off_shows_nothing() {
-        // The request is already in flight when the checkbox is unticked.
-        // A banner arriving after that would be the setting not meaning
-        // anything.
         let mut s = UiState::new(GameId::OpenRCT2);
         reduce(&mut s, Msg::ToggleCheckForUpdates(false));
         reduce(&mut s, Msg::UpdateChecked(Some(an_update("0.2.0"))));
@@ -1430,16 +1163,11 @@ mod tests {
 
     #[test]
     fn checking_for_updates_defaults_on() {
-        // Somebody running an old build with a fixed bug in it is the case
-        // this exists for, and they are exactly the person who will not go
-        // looking for the setting.
         assert!(UiState::new(GameId::OpenRCT2).check_for_updates);
     }
 
     #[test]
     fn a_cancelled_picker_does_nothing_at_all() {
-        // Cancelling is how most people leave a file panel. Treating it as a
-        // failure would put a spinner up, or an alert, over nothing.
         let mut s = UiState::new(GameId::OpenRCT2);
         let effects = reduce(
             &mut s,
@@ -1504,9 +1232,6 @@ mod tests {
 
     #[test]
     fn one_game_finishing_does_not_touch_another() {
-        // Three games share one screen and one busy flag. A reply that wrote
-        // the wrong slot would show somebody Locomotion installed where they
-        // installed RollerCoaster Tycoon.
         let mut s = UiState::new(GameId::OpenRCT2);
         reduce(
             &mut s,
@@ -1592,8 +1317,6 @@ mod tests {
 
     #[test]
     fn changing_the_install_directory_saves_it_and_looks_again() {
-        // Where the data is depends on where it is unpacked, so what is on
-        // screen is stale the moment this changes.
         let mut s = UiState::new(GameId::OpenRCT2);
         let effects = reduce(&mut s, Msg::InstallRootChosen(Some("/elsewhere".into())));
 
@@ -1610,7 +1333,6 @@ mod tests {
 
     #[test]
     fn going_back_to_the_default_saves_the_absence_of_a_path() {
-        // Saved as an empty string it would be a path, and an unusable one.
         let mut s = UiState::new(GameId::OpenRCT2);
         reduce(&mut s, Msg::InstallRootChosen(Some("/elsewhere".into())));
         let effects = reduce(&mut s, Msg::InstallRootChosen(None));
@@ -1636,7 +1358,6 @@ mod tests {
     #[test]
     fn switching_back_to_a_game_already_fetched_asks_github_nothing() {
         let mut s = UiState::new(GameId::OpenRCT2);
-        // Arriving releases are what fills the cache.
         let g = s.generation;
         reduce(
             &mut s,
@@ -1670,10 +1391,6 @@ mod tests {
 
     #[test]
     fn a_cache_hit_still_evaluates_auto_update() {
-        // The trap this guards: auto-update is evaluated when releases
-        // arrive, so serving them from the cache without going through the
-        // same path would stop it firing on a game switch. Both paths run
-        // through `adopt_releases` for exactly this reason.
         let mut s = UiState::new(GameId::OpenRCT2);
         s.set_auto_update(GameId::OpenRCT2, true);
         s.installed = vec![installed("v2", true)];
@@ -1697,9 +1414,6 @@ mod tests {
 
     #[test]
     fn the_cache_is_keyed_on_the_channel_choice_too() {
-        // Turning development builds on queries a second repository rather
-        // than filtering the first, so a cache keyed on the game alone would
-        // serve release-only rows as though they included development ones.
         let mut s = UiState::new(GameId::OpenRCT2);
         let g = s.generation;
         reduce(
@@ -1807,11 +1521,6 @@ mod tests {
         assert!(!s.download_enabled(), "nothing is enabled while busy");
     }
 
-    /// The regression Task 22's smoke test found. Remove used to require
-    /// the selection to differ from the active version, which
-    /// `SelectInstalled` and `InstalledLoaded` between them make
-    /// impossible, so the button was permanently grey. The active version
-    /// is removable now because the app switches away from it first.
     #[test]
     fn remove_is_enabled_for_the_active_version() {
         let mut s = ready_state();
@@ -1889,8 +1598,6 @@ mod tests {
     #[test]
     fn activate_uses_the_installed_name_not_the_shared_display_tag() {
         let mut s = ready_state();
-        // A collision two `.version` files can produce: both say "v2", but
-        // `adopt_dir`'s free-name walk keeps the directory names distinct.
         s.installed = vec![
             Installed {
                 tag: "v2".into(),
@@ -2016,11 +1723,6 @@ mod tests {
         );
     }
 
-    /// No `busy` here, unlike the two tests above: this toggle is refused
-    /// outright while anything is in flight (see the test below), so
-    /// "unsticks a stuck UI" is no longer a property it can have.
-    /// `SelectGame` and `ToggleDevelop` do still interrupt, and they are
-    /// what keeps that property covered.
     #[test]
     fn toggling_multi_version_cancels_stale_work_and_clears_a_stale_error() {
         let mut s = ready_state();
@@ -2181,10 +1883,6 @@ mod tests {
         );
     }
 
-    /// `Progress` updates a busy state, it never creates one. The main
-    /// queue is FIFO so a report after the reply that ended its operation
-    /// should not be constructible, but if one ever were, it must not
-    /// leave every control disabled with nothing running.
     #[test]
     fn progress_with_nothing_running_does_not_make_the_ui_busy() {
         let mut s = ready_state();
@@ -2271,8 +1969,6 @@ mod tests {
         );
     }
 
-    /// `installed` is newest first, so the switch target is the first
-    /// entry that is not the one being deleted.
     #[test]
     fn removing_a_version_switches_to_the_newest_other_one_first() {
         let mut s = ready_state();
@@ -2296,9 +1992,6 @@ mod tests {
         );
     }
 
-    /// The names are decided at click time and not looked at again: a
-    /// reload that lands while the modal is open (`runModal` pumps a nested
-    /// run loop, so it really can) must not redirect the deletion.
     #[test]
     fn a_reload_during_the_confirmation_cannot_redirect_the_deletion() {
         let mut s = ready_state();
@@ -2314,8 +2007,6 @@ mod tests {
                 .any(|e| matches!(e, Effect::ConfirmRemove { name } if name == "v3"))
         );
 
-        // The modal is open; a `LoadInstalled` reply arrives and reorders
-        // everything under it.
         let generation = s.generation;
         reduce(
             &mut s,
@@ -2349,16 +2040,12 @@ mod tests {
         s.selected_installed = 0;
 
         reduce(&mut s, Msg::ClickRemove);
-        // Cancel is simply the absence of `ConfirmRemove`: nothing else is
-        // sent, and nothing in `UiState` changed on the way here.
         assert_eq!(s.selected_installed, 0);
         assert_eq!(s.installed.len(), 2);
         assert_eq!(s.active.as_deref(), Some("v2"));
         assert!(s.error.is_none());
         assert!(!s.is_busy());
 
-        // And the cancelled pair cannot be picked up afterwards: a second
-        // click that finds Remove disabled disarms it.
         s.installed = vec![installed("v2", true)];
         reduce(&mut s, Msg::ClickRemove);
         assert!(reduce(&mut s, Msg::ConfirmRemove).is_empty());
@@ -2382,8 +2069,6 @@ mod tests {
         );
     }
 
-    /// A switch that failed comes back as `Activated`, and the reducer must
-    /// not turn that into a deletion of any kind.
     #[test]
     fn a_failed_switch_produces_no_deletion() {
         let mut s = ready_state();
@@ -2417,9 +2102,6 @@ mod tests {
         );
     }
 
-    /// The other half of that: a removal that failed *after* a successful
-    /// switch has already moved `bin`, so the list has to be reread even
-    /// though the operation errored.
     #[test]
     fn a_failed_removal_still_reloads_because_the_switch_already_happened() {
         let mut s = ready_state();
@@ -2594,10 +2276,6 @@ mod tests {
 
     #[test]
     fn a_failed_launch_carries_the_selected_games_name_as_its_title_argument() {
-        // `FailedToLaunchGame` is "Failed to launch {0}"; the reducer must
-        // hand over the game name as data for `strings::format1` to
-        // substitute, not a formatted string, since `state.rs` stays free
-        // of `strings.rs`.
         let mut s = ready_state();
         s.selected_game = GameId::OpenLoco;
 
@@ -2635,8 +2313,6 @@ mod tests {
         );
     }
 
-    // --- Minor 3: a startup repair failure is surfaced, not swallowed ----
-
     #[test]
     fn a_startup_repair_failure_is_surfaced_as_a_generation_scoped_error() {
         let mut s = ready_state();
@@ -2659,10 +2335,6 @@ mod tests {
         );
     }
 
-    /// The reason it is not `generation: None`. That class belongs to
-    /// `LaunchFinished`, whose success arm clears every error in it, so a
-    /// repair failure filed there would be dismissed by an unrelated
-    /// successful launch. Each event clears exactly the class it owns.
     #[test]
     fn a_successful_launch_does_not_clear_a_startup_repair_failure() {
         let mut s = ready_state();
@@ -2683,9 +2355,6 @@ mod tests {
         );
     }
 
-    /// And the reload the initial `SelectGame` starts must not wipe it
-    /// either, which is what deferred item 18 already relies on: the `Ok`
-    /// arms of the two load replies do not clear `error`.
     #[test]
     fn a_reload_does_not_clear_a_startup_repair_failure() {
         let mut s = ready_state();
@@ -2773,15 +2442,6 @@ mod tests {
 
     #[test]
     fn auto_update_does_not_reinstall_what_is_already_active_in_compatible_mode() {
-        // `ready_state` leaves `multi_version` false, i.e. compatible mode,
-        // where `VersionStore::active` reports a *tag* and the sole
-        // installed entry's `name` is always the literal string "bin" --
-        // never equal to its tag. `installed_named` is what lets this test
-        // say so, rather than `installed`'s `name == tag` shortcut, which
-        // would hide exactly this bug: comparing `active` against `name`
-        // here never matches, `newest_installable` concludes nothing is
-        // installed, and auto-update re-downloads a build that is already
-        // on disk and already running, over the user's live installation.
         let mut s = ready_state();
         s.set_auto_update(s.selected_game, true);
         s.active = Some("v3".into()); // compatible mode: `active` is the tag
@@ -2806,13 +2466,6 @@ mod tests {
         );
     }
 
-    // --- C1: the auto-update preference is per game -----------------------
-
-    /// The one-click failure this whole field shape exists to prevent.
-    /// Auto-update is on for OpenRCT2 and off for OpenLoco; clicking
-    /// OpenLoco in the sidebar must not install an OpenLoco build, which in
-    /// compatible mode would replace `bin` and delete whatever the user was
-    /// deliberately keeping.
     #[test]
     fn switching_to_a_game_with_auto_update_off_installs_nothing() {
         let mut s = ready_state();
@@ -2845,9 +2498,6 @@ mod tests {
         assert!(s.popup_enabled());
     }
 
-    /// The mirror case, which is the silent one: a game whose stored value
-    /// is on must still auto-update after a switch, rather than inheriting
-    /// the previous game's off.
     #[test]
     fn switching_to_a_game_with_auto_update_on_still_installs() {
         let mut s = ready_state();
@@ -2876,10 +2526,6 @@ mod tests {
         );
     }
 
-    /// The write-back half. `controller::perform` saves `Pref::AutoUpdate`
-    /// under `state.selected_game`, so the slot the reducer writes has to be
-    /// that same game's, or the in-memory value and the stored key diverge
-    /// on the very next switch.
     #[test]
     fn toggling_auto_update_writes_only_the_selected_games_slot() {
         let mut s = ready_state();
@@ -2915,13 +2561,6 @@ mod tests {
         );
     }
 
-    // --- I1: busy is set when an operation is initiated -------------------
-
-    /// Every long-running operation, at the moment it is issued. Until this
-    /// held, `busy` arrived only with the first progress report -- seconds
-    /// into an install, and never at all for the three that report none --
-    /// so every `!is_busy()` guard stood open for exactly as long as the
-    /// work it was meant to exclude.
     #[test]
     fn initiating_an_operation_is_what_makes_the_ui_busy() {
         let mut s = ready_state();
@@ -2973,10 +2612,6 @@ mod tests {
         assert!(s.is_busy(), "auto-update install");
     }
 
-    /// The other half of the obligation, and the one that has already been
-    /// got wrong on this branch: everything that sets `busy` must clear it,
-    /// on failure as well as success. A missed clear leaves the app inert
-    /// with every control disabled.
     #[test]
     fn every_operation_clears_busy_on_success_and_on_failure() {
         for result in [Ok(()), Err("boom".to_string())] {
@@ -3005,9 +2640,6 @@ mod tests {
             );
             assert!(!s.is_busy(), "activate, {result:?}");
 
-            // Both phases of the two-phase effect: a failure in the switch
-            // reports as `Activated`, a failure in the delete as `Removed`,
-            // and either one ends the operation.
             for phase in ["activated", "removed"] {
                 let mut s = ready_state();
                 s.multi_version = true;
@@ -3047,10 +2679,6 @@ mod tests {
         }
     }
 
-    /// One toggle issues one store operation per game, so `busy` has to
-    /// outlast the first reply. Clearing on it would re-open every guard
-    /// while the second store is still mid-rename, which is the state the
-    /// review traced to a store left with no `bin` at all.
     #[test]
     fn a_mode_change_stays_busy_until_every_games_store_has_answered() {
         let mut s = ready_state();
@@ -3086,9 +2714,6 @@ mod tests {
         assert!(!s.is_busy());
     }
 
-    /// The double-click the review traced to its end: nothing can cancel a
-    /// rename already under way, so a second mode change must not be
-    /// startable until the first has finished.
     #[test]
     fn a_second_mode_change_cannot_be_started_while_the_first_is_running() {
         let mut s = ready_state();
@@ -3104,10 +2729,6 @@ mod tests {
         );
     }
 
-    /// The window I1(b) describes: `Download` used to leave every guard
-    /// open until the first progress report, several seconds in, so a click
-    /// on Remove in between issued a deletion against a store an install
-    /// was already writing.
     #[test]
     fn remove_cannot_be_started_in_the_gap_before_a_download_reports_progress() {
         let mut s = ready_state();
@@ -3128,9 +2749,6 @@ mod tests {
         );
     }
 
-    /// `NSAlert::runModal` pumps a nested run loop, so the world can change
-    /// between the click that opened the dialog and the answer that closes
-    /// it. The confirmation re-checks rather than trusting the click.
     #[test]
     fn a_confirmation_answered_after_work_has_started_is_refused() {
         let mut s = ready_state();
@@ -3138,7 +2756,6 @@ mod tests {
         s.selected_installed = 1;
         reduce(&mut s, Msg::ClickRemove);
 
-        // Delivered while the modal is open.
         let generation = s.generation;
         reduce(
             &mut s,
@@ -3161,13 +2778,6 @@ mod tests {
         );
     }
 
-    /// Minor B. The refusal above is correct, but it used to be *silent*:
-    /// the dialog closed, the build stayed, and nothing said why. This is
-    /// the exact route there, built out of messages rather than by assigning
-    /// `busy` by hand, because the route is the finding -- `remove_enabled()`
-    /// does not consult `auto_update`, so Remove is clickable with
-    /// auto-update on, and the `ReleasesLoaded` that arrives through the
-    /// modal's nested run loop then starts an install of its own.
     #[test]
     fn a_confirmation_refused_because_work_started_says_so() {
         let mut s = ready_state();
@@ -3178,8 +2788,6 @@ mod tests {
 
         reduce(&mut s, Msg::ClickRemove);
 
-        // Delivered while the dialog is on screen. With auto-update on this
-        // is what takes the store away from the removal.
         let generation = s.generation;
         let releases = vec![
             ReleaseRow {
@@ -3225,9 +2833,6 @@ mod tests {
         );
     }
 
-    /// The other half of the arm: a `ConfirmRemove` with nothing armed is
-    /// not a refusal and must stay silent. Otherwise the banner would
-    /// appear for a confirmation the user never gave.
     #[test]
     fn a_confirmation_with_nothing_armed_reports_nothing() {
         let mut s = ready_state();
@@ -3241,9 +2846,6 @@ mod tests {
         assert!(s.error.is_none(), "got {:?}", s.error);
     }
 
-    /// Selecting is switching, so it is refused outright while something is
-    /// running: moving the selection without activating would leave the
-    /// popup naming a build that is not the one in use.
     #[test]
     fn selecting_another_installed_version_is_refused_while_busy() {
         let mut s = ready_state();
@@ -3256,9 +2858,6 @@ mod tests {
         assert_eq!(s.selected_installed, 0, "and the selection did not move");
     }
 
-    /// The hazard that made setting `busy` at initiation dangerous the
-    /// first time it was tried: a bump discards the reply that would have
-    /// cleared it, so the bump has to clear it itself, unconditionally.
     #[test]
     fn a_generation_bump_clears_busy_that_was_set_at_initiation() {
         for interrupt in [Msg::SelectGame(GameId::OpenLoco), Msg::ToggleDevelop(true)] {
@@ -3270,7 +2869,6 @@ mod tests {
             reduce(&mut s, interrupt);
             assert!(s.busy.is_none(), "a bump must not leave the UI stuck busy");
 
-            // And the discarded reply does not resurrect or unbalance it.
             reduce(
                 &mut s,
                 Msg::InstallFinished {
@@ -3280,8 +2878,6 @@ mod tests {
             );
             assert!(s.busy.is_none());
 
-            // `SelectGame` clears the release list, so give the new
-            // generation something to install before asking again.
             let generation = s.generation;
             reduce(
                 &mut s,
@@ -3309,11 +2905,6 @@ mod tests {
 
     #[test]
     fn auto_update_does_not_reinstall_what_is_already_active_in_multi_version_mode() {
-        // The mirror image of the compatible-mode test above: here `active`
-        // is a *name*, and a collision walk can make it differ from the
-        // entry's `tag` (the exact shape `adopt_dir`'s free-name walk
-        // produces). Comparing by tag instead of name would wrongly
-        // conclude this entry is not the active one.
         let mut s = ready_state();
         s.set_auto_update(s.selected_game, true);
         s.multi_version = true;

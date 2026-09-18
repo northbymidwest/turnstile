@@ -22,8 +22,6 @@ fn main() {
 
     views::menu::install(mtm);
 
-    // The controller owns the views and drives them from state for the rest
-    // of the process's life; see controller::start.
     controller::start(mtm);
 
     app.activate();

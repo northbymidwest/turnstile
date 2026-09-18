@@ -1,9 +1,8 @@
-//! Settings persisted over `NSUserDefaults` on an **explicit suite**, not
-//! the standard bundle-keyed defaults. Two reasons, both load-bearing: it
-//! gives a clean `~/Library/Preferences/Turnstile.plist`, and the standard
-//! defaults key on the bundle identifier, which is absent under
-//! `cargo run`, so bundle-keyed storage would silently put development and
-//! bundled runs in different domains.
+//! Settings persisted over `NSUserDefaults` on an **explicit suite**, not the
+//! standard bundle-keyed defaults: it gives a clean
+//! `~/Library/Preferences/Turnstile.plist`, and the standard defaults key on
+//! the bundle identifier, which is absent under `cargo run`, so bundle-keyed
+//! storage would silently split development and bundled runs into two domains.
 
 use objc2::AnyThread;
 use objc2::rc::Retained;
@@ -20,9 +19,7 @@ pub const KEY_MULTI_VERSION: &str = "keepMultipleVersions";
 pub const KEY_SELECTED_GAME: &str = "selectedGame";
 pub const KEY_INSTALL_ROOT: &str = "gameDataDirectory";
 
-/// `game_key` is always `GameId::key()`, never a display string: the key is
-/// derived from the enum at every call site, not assembled from a name and
-/// resolved by reflection the way upstream does.
+/// `game_key` is always `GameId::key()`, never a display string.
 pub fn auto_update_key(game_key: &str) -> String {
     format!("autoInstallUpdates.{game_key}")
 }
@@ -37,10 +34,8 @@ pub fn mode_for(multi_version: bool) -> Mode {
 
 pub struct Prefs {
     defaults: Retained<NSUserDefaults>,
-    /// `NSUserDefaults` never hands this back, and `remove_all` (test-only)
-    /// needs it to remove the whole domain rather than key-by-key. Unread
-    /// outside that test-only path, so it is dead weight in a production
-    /// build.
+    /// `NSUserDefaults` never hands this back, but `remove_all` (test-only)
+    /// needs it to remove the whole domain rather than key-by-key.
     #[cfg_attr(not(test), allow(dead_code))]
     suite: String,
 }
@@ -69,10 +64,8 @@ impl Prefs {
             .setBool_forKey(value, &NSString::from_str(key));
     }
 
-    // Generic round-trip coverage only: no preference is actually stored as
-    // a plain integer (`selected_game` uses `GameId::key()` via
-    // get_string/set_string precisely to avoid that), so nothing outside
-    // this module's own tests calls these.
+    // Generic round-trip coverage only: no preference is stored as a plain
+    // integer, so nothing outside this module's own tests calls these.
     #[cfg(test)]
     fn get_int(&self, key: &str) -> i64 {
         self.defaults.integerForKey(&NSString::from_str(key)) as i64
@@ -98,37 +91,26 @@ impl Prefs {
         let obj: Retained<NSString> = NSString::from_str(value);
         let obj: &AnyObject = &obj;
         // SAFETY: the value is an `NSString`, exactly the type
-        // `-setObject:forKey:`'s "must be of the correct type" contract
-        // requires for a key read back with `-stringForKey:`.
+        // `-setObject:forKey:` requires for a key read back with
+        // `-stringForKey:`.
         unsafe {
             self.defaults
                 .setObject_forKey(Some(obj), &NSString::from_str(key))
         };
     }
 
-    /// Removes the whole domain `self` was opened with, not just the keys
-    /// this module knows about. Test-only: production code has no reason to
-    /// wipe a user's settings wholesale.
+    /// Removes the whole domain `self` was opened with. Test-only: production
+    /// code has no reason to wipe a user's settings wholesale.
     ///
-    /// This clears the domain's *contents*, which is what the tests need
-    /// for isolation from each other and from a previous run, but an empty
-    /// `~/Library/Preferences/<suite>.plist` may still be left on disk
-    /// afterward: `cfprefsd` re-flushes a domain it has touched sometime
-    /// after the owning process exits, regardless of whether that domain is
-    /// now empty, and `NSUserDefaults` has no API that removes the file
-    /// itself, only its contents.
+    /// This clears the domain's *contents*, but an empty
+    /// `~/Library/Preferences/<suite>.plist` may still be left on disk:
+    /// `cfprefsd` re-flushes a domain it has touched after the owning process
+    /// exits, and `NSUserDefaults` has no API that removes the file itself.
     ///
-    /// A `std::fs::remove_file` at the suite's path was tried here and
-    /// withdrawn: it appeared to work when checked immediately, but the
-    /// file reliably came back within about fifteen seconds of the test
-    /// process exiting, confirmed by direct measurement. Deleting a file a
-    /// daemon is about to recreate is not cleanup, it is a race this
-    /// process cannot win, and carrying that code brought a real hazard for
-    /// no working benefit: `#[cfg(test)]` is the only thing stopping it
-    /// from deleting `~/Library/Preferences/Turnstile.plist`, the
-    /// developer's real settings, the day someone drops that bound to
-    /// reuse this helper elsewhere. This is cosmetic: the leftover files
-    /// are empty and a few hundred bytes each.
+    /// A `std::fs::remove_file` was tried here and withdrawn: the file
+    /// reliably came back within about fifteen seconds. It also brought a real
+    /// hazard, since `#[cfg(test)]` was the only thing stopping it deleting
+    /// the developer's real settings.
     #[cfg(test)]
     pub fn remove_all(&self) {
         self.defaults
@@ -137,8 +119,8 @@ impl Prefs {
     }
 
     /// Defaults to true, which is why this cannot use `get_bool`: an absent
-    /// key reads as false there, and that would leave the check off for
-    /// everyone who has never opened Settings.
+    /// key reads as false there, leaving the check off for everyone who has
+    /// never opened Settings.
     pub fn check_for_updates(&self) -> bool {
         match self
             .defaults
@@ -161,21 +143,19 @@ impl Prefs {
         self.get_bool(&auto_update_key(game.key()))
     }
 
-    /// Falls back to the first game when the stored key is absent or names
-    /// a game this build does not have. Storing `GameId::key()` rather than
-    /// an index is what makes that fallback safe: an index would silently
-    /// point at a different game the moment the list gains an entry or
-    /// changes order, while an unrecognised key is simply rejected by
-    /// `GameId::from_key`.
+    /// Falls back to the first game when the stored key is absent or names a
+    /// game this build does not have. Storing `GameId::key()` rather than an
+    /// index is what makes that safe: an index would silently point at a
+    /// different game the moment the list changes order.
     pub fn selected_game(&self) -> GameId {
         self.get_string(KEY_SELECTED_GAME)
             .and_then(|s| GameId::from_key(&s))
             .unwrap_or(GameId::ALL[0])
     }
 
-    /// Where game data is unpacked, or `None` for the default. Absent and
-    /// empty both mean the default: an empty string is what a preference
-    /// edited by hand tends to end up as, and it is not a usable path.
+    /// Where game data is unpacked, or `None` for the default. Absent and empty
+    /// both mean the default: an empty string is what a hand-edited preference
+    /// tends to end up as, and it is not a usable path.
     pub fn install_root(&self) -> Option<std::path::PathBuf> {
         self.get_string(KEY_INSTALL_ROOT)
             .filter(|path| !path.trim().is_empty())
@@ -221,9 +201,6 @@ mod tests {
 
     #[test]
     fn an_unrecognised_key_still_gets_its_own_distinct_preference_key() {
-        // `auto_update_key` is a pure formatter: it does not require the
-        // input to name a game this build knows about, so a hypothetical
-        // future game cannot collide with an existing one.
         assert_eq!(auto_update_key("Something"), "autoInstallUpdates.Something");
     }
 
@@ -235,7 +212,6 @@ mod tests {
 
     #[test]
     fn a_round_trip_through_the_real_defaults_preserves_values() {
-        // Uses a throwaway suite so the developer's own settings are untouched.
         let p = Prefs::with_suite("TurnstileTestRoundTrip");
         p.remove_all();
         p.set_bool(KEY_MULTI_VERSION, true);
@@ -289,9 +265,6 @@ mod tests {
         assert!(p.auto_update(GameId::OpenRCT2));
         assert!(!p.auto_update(GameId::OpenLoco));
 
-        // The other direction too, which is what `UiState`'s per-game array
-        // mirrors: turning one game's setting on or off must leave the
-        // other's exactly where it was.
         p.save(Pref::AutoUpdate(true), GameId::OpenLoco);
         assert!(p.auto_update(GameId::OpenRCT2));
         assert!(p.auto_update(GameId::OpenLoco));

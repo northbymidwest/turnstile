@@ -1,26 +1,17 @@
-//! The seam where `Effect`s become real work. `Controller` owns the state
-//! and the views; `handle` runs reduce, then renders, then performs; and
-//! `perform` turns each `Effect` into either an immediate main-thread action
-//! or a background thread that eventually posts a `Msg` back through
-//! `mainqueue`.
+//! The seam where `Effect`s become real work. `Controller` owns the state and
+//! the views; `handle` runs reduce, then renders, then performs; and `perform`
+//! turns each `Effect` into either an immediate main-thread action or a
+//! background thread that eventually posts a `Msg` back through `mainqueue`.
 //!
-//! `Controller` is `Rc`-based and confined to the main thread by
-//! construction: nothing here is `Send`, so a worker thread can only ever
-//! compute a `Msg` (which is `Send`) and hand it to `mainqueue::post`. The
-//! main-queue closure registered in `start` is what recovers the `Rc` from
-//! `mainqueue`'s own `thread_local!` once that `Msg` is delivered back here.
-//! Do not give `Controller` a `Sync` impl or a `static` slot to make it
-//! reachable from a worker directly: see `mainqueue::HANDLER`'s doc comment
+//! `Controller` is `Rc`-based and confined to the main thread by construction:
+//! nothing here is `Send`, so a worker can only compute a `Msg` and hand it to
+//! `mainqueue::post`. Do not give `Controller` a `Sync` impl or a `static`
+//! slot to make it reachable from a worker directly -- see `mainqueue::HANDLER`
 //! for why that shape was tried and reverted as unsound.
 //!
 //! Every effect that touches the version store is spawned through
-//! `storelock::spawn` rather than `mainqueue::spawn`, which holds one
-//! process-wide lock for the operation's whole duration. The two exceptions
-//! are marked and justified at their arms in `perform`. That lock is what
-//! keeps two workers out of the same `bin`; the reducer's `!is_busy()`
-//! guards are what keep the *interface* from claiming two operations at
-//! once, and neither substitutes for the other -- see `storelock`'s own doc
-//! comment for how the two compose with the generation gate.
+//! `storelock::spawn`, which holds one process-wide lock for the operation's
+//! whole duration; the two exceptions are marked at their arms in `perform`.
 
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -50,10 +41,9 @@ use crate::state::{Effect, Msg, ReleaseRow, UiState, reduce};
 use crate::storelock;
 use crate::views::{self, Views};
 
-/// Where the update check looks. Named here rather than read from anywhere
-/// at runtime: an application that takes its own update source from a file it
-/// ships is an application whose update source can be changed by editing that
-/// file.
+/// Where the update check looks. Named here rather than read at runtime: an
+/// application that takes its update source from a file it ships is one whose
+/// update source can be changed by editing that file.
 const UPDATE_OWNER: &str = "northbymidwest";
 const UPDATE_REPO: &str = "turnstile";
 
@@ -62,37 +52,24 @@ pub struct Controller {
     state: RefCell<UiState>,
     views: Views,
     prefs: Prefs,
-    /// The cancel flag for whichever install is currently in flight, if
-    /// any. One flag per install, never shared or reused: `Effect::Install`
-    /// mints a fresh one and cancels-and-replaces whatever was here before,
-    /// and `Effect::CancelInFlight` takes this one out and sets it. Sharing
-    /// a single flag across installs was tried and reverted -- see
-    /// `perform`'s `Effect::Install` arm -- because resetting it to `false`
-    /// for a new install could silently un-cancel an old one still running
-    /// under the same flag.
+    /// The cancel flag for whichever install is currently in flight. One flag
+    /// per install, never shared or reused: sharing one across installs was
+    /// tried and reverted, because resetting it to `false` for a new install
+    /// could silently un-cancel an old one still running under it.
     cancel: RefCell<Option<Arc<AtomicBool>>>,
 }
 
-/// The shortest gap between two *fraction* updates reaching the main queue:
-/// twenty a second, comfortably more than the display can show and three
-/// orders of magnitude below what `download.rs` produces.
+/// The shortest gap between two *fraction* updates reaching the main queue.
 ///
-/// The number it replaces was measured rather than guessed. `download.rs`
-/// calls its progress callback once per read, and a real OpenRCT2 release
-/// (117 MB) produced 7293 calls in 2.3 seconds -- 3175 a second, a median
-/// of 132 microseconds apart. Each one ran the whole of `views::apply`,
-/// which costs about 434 microseconds in a release build with the releases
-/// popup full. Posting three thousand blocks a second onto a main queue
-/// that can retire two thousand does not just lag: the queue never drains,
-/// so the run loop never reaches the pass that would commit anything to the
-/// screen, and every intermediate state is skipped. Twenty a second costs
-/// under one percent of the main thread.
+/// Measured rather than guessed: a 117 MB release produced 7293 progress calls
+/// in 2.3 seconds, and each one ran the whole of `views::apply` at ~434
+/// microseconds. Posting three thousand blocks a second onto a main queue that
+/// can retire two thousand means the queue never drains, so the run loop never
+/// reaches the pass that would commit anything to the screen.
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(50);
 
-/// Decides which of an install's progress reports are worth a main-queue
-/// hop. One per install, owned by the worker that produced the reports.
+/// Decides which of an install's progress reports are worth a main-queue hop.
 struct ProgressThrottle {
-    /// When the last report was let through, and what status it carried.
     last: Option<(Instant, Status)>,
 }
 
@@ -101,14 +78,11 @@ impl ProgressThrottle {
         ProgressThrottle { last: None }
     }
 
-    /// Whether `p` must reach the UI. **Only an intermediate fraction is
-    /// ever dropped.** The first report, any change of status, a switch to
-    /// indeterminate (`value: None`) and the report that completes a phase
-    /// (`1.0`) all say what the app is *doing* rather than how far along it
-    /// is, and swallowing one of those would leave the interface stating
-    /// something untrue -- a worse failure than the cosmetic one this
-    /// exists to fix. Downloading to Extracting is exactly such a
-    /// transition, and it is the one the smoke test never saw.
+    /// Whether `p` must reach the UI. **Only an intermediate fraction is ever
+    /// dropped.** The first report, any change of status, a switch to
+    /// indeterminate and the report that completes a phase all say what the
+    /// app is *doing* rather than how far along it is, and swallowing one
+    /// would leave the interface stating something untrue.
     fn should_post(&mut self, p: Progress, now: Instant) -> bool {
         let is_intermediate_fraction = matches!(p.value, Some(fraction) if fraction < 1.0);
         let same_phase = self.last.is_some_and(|(_, status)| status == p.status);
@@ -125,21 +99,17 @@ impl ProgressThrottle {
     }
 }
 
-/// Where a game's data is, if it is where the game's own configuration says
-/// it is and something is actually there.
-///
-/// The configuration is the authority rather than the preference: somebody
-/// may have pointed the game somewhere by hand, or years ago, and that is
-/// still where the data is.
+/// Where a game's data is, if the game's own configuration says so and
+/// something is actually there. The configuration is the authority rather than
+/// the preference: somebody may have pointed the game somewhere by hand.
 fn installed_game_data(game: OriginalGame) -> Option<PathBuf> {
     let dirs = Dirs::system()?;
     let configured = gameconfig::configured_path(game, &dirs).ok().flatten()?;
     gamedata::installed_at(game, &configured).then_some(configured)
 }
 
-/// `~/Library/Application Support/Turnstile/games`, and the current
-/// directory in the impossible case of no home, which keeps this total
-/// rather than making every caller handle a case that cannot happen.
+/// `~/Library/Application Support/Turnstile/games`, falling back to the
+/// current directory in the impossible case of no home so this stays total.
 fn default_install_root() -> PathBuf {
     Dirs::system().map_or_else(
         || PathBuf::from("."),
@@ -164,12 +134,10 @@ pub fn start(mtm: MainThreadMarker) {
     state.show_develop = prefs.show_develop();
     state.check_for_updates = prefs.check_for_updates();
     state.multi_version = prefs.multi_version();
-    // Every game's auto-update value, not just the one being restored.
-    // `Msg::SelectGame` clears the game-scoped state and reloads nothing
-    // from preferences, and it must not: `reduce` is pure. Loading all of
-    // them here is what makes a switch correct in the same turn it happens,
-    // with no window in which `ReleasesLoaded` could act on another game's
-    // setting. The other two above are deliberately global.
+    // Every game's value, not just the selected one: `Msg::SelectGame` reloads
+    // nothing from preferences and must not, since `reduce` is pure. Loading
+    // all of them here leaves no window in which `ReleasesLoaded` could act on
+    // another game's setting.
     for game in GameId::ALL {
         state.set_auto_update(game, prefs.auto_update(game));
     }
@@ -182,11 +150,10 @@ pub fn start(mtm: MainThreadMarker) {
         cancel: RefCell::new(None),
     });
 
-    // Worker threads cannot hold the Rc, so they post a Msg and the
-    // main-queue closure recovers the controller from here. This must run
-    // before anything else can post: a Msg posted before `register` runs is
-    // silently dropped (see `mainqueue::post`), and `Actions`' selectors are
-    // already live the moment `views::build` returns.
+    // Worker threads cannot hold the Rc, so they post a Msg and the main-queue
+    // closure recovers the controller from here. This must run before anything
+    // can post: a Msg posted before `register` is silently dropped, and
+    // `Actions`' selectors are live the moment `views::build` returns.
     let weak = Rc::downgrade(&controller);
     mainqueue::register(Rc::new(move |msg| {
         if let Some(controller) = weak.upgrade() {
@@ -194,42 +161,26 @@ pub fn start(mtm: MainThreadMarker) {
         }
     }));
 
-    // Repair whatever is on disk before showing anything, so the first
-    // render reflects reality rather than a half-finished mode switch.
+    // Repair whatever is on disk before showing anything, so the first render
+    // reflects reality rather than a half-finished mode switch. Debris is swept
+    // first and that order is load-bearing: `recover_debris` puts a build
+    // caught between install's two renames back at its destination, and
+    // `reconcile` then decides where `bin` points. The other way round,
+    // `link_to_newest` would leave the restored build inactive.
     //
-    // Crash debris from an interrupted install is swept first, and that
-    // order is load-bearing rather than incidental: `recover_debris` puts a
-    // build that was caught between install's two renames back at its
-    // destination, and `reconcile` is what then decides where `bin` points.
-    // The other way round, `link_to_newest` would choose among the versions
-    // that happened to survive and leave the restored one inactive.
-    //
-    // Until this call existed, that build sat in `.trash-<name>` and the app
-    // reported nothing installed until the user started another install --
-    // which they had no reason to do, being told there was nothing there.
-    //
-    // Under the store lock, like every other store operation, and taken
-    // once around both games rather than per game: these are store
-    // mutations and nothing about them is special except when they run.
-    //
-    // This is the one acquisition made on the main thread, and it is the
-    // one that cannot block. No worker exists yet: workers are spawned only
-    // from `perform`, `perform` runs only from `handle`, and the first
-    // `handle` call is below this. The repair itself already blocks the main
-    // thread -- it is a synchronous walk of the store -- so an uncontended
-    // lock adds nothing to that. Do not move this after the `handle` below,
-    // which would make it contended and therefore able to block the UI.
+    // This is the one lock acquisition made on the main thread, and it cannot
+    // block: no worker exists yet, since the first `handle` call is below.
+    // Do not move it after that `handle`, which would make it contended.
     let mode = controller.mode();
     let mut repair_failures: Vec<String> = Vec::new();
     storelock::serialized(|| {
         for game in GameId::ALL {
             if let Some(store) = store_for(game) {
                 install::recover_debris(&store, mode);
-                // Reported rather than discarded. `reconcile_compatible` can
-                // fail with "<path> exists from an interrupted operation; run
-                // reconcile first", an error whose stated remedy is the thing
-                // that just failed, and swallowing it left the app running on
-                // an unrepaired store with the user told nothing.
+                // Reported rather than discarded: `reconcile_compatible` can
+                // fail with an error whose stated remedy is the thing that
+                // just failed, and swallowing it left the app running on an
+                // unrepaired store with the user told nothing.
                 if let Err(e) = store.reconcile(mode) {
                     repair_failures.push(format!("{}: {e}", game.display_name()));
                 }
@@ -244,39 +195,30 @@ pub fn start(mtm: MainThreadMarker) {
     // would save it back and rescan for no reason.
     controller.state.borrow_mut().install_root = controller.prefs.install_root();
 
-    // After the first `SelectGame`, not before it: that message bumps the
-    // generation, and an error raised ahead of it would be cleared as stale
-    // by the very bump that starts the app up. Non-modal on purpose -- this
-    // arrives while the window is still settling, and a modal at that moment
-    // blocks the first render behind a dialog the user cannot yet place. The
-    // banner is already the app's channel for an error about the store, and
-    // `InstalledLoaded`'s success arm deliberately does not clear it, so it
-    // survives the reload the switch above just started.
+    // After the first `SelectGame`, not before: that message bumps the
+    // generation, and an error raised ahead of it would be cleared as stale by
+    // the very bump that starts the app up. Non-modal on purpose, since a
+    // dialog at this moment blocks the first render.
     if !repair_failures.is_empty() {
         controller.handle(Msg::StartupRepairFailed {
             message: repair_failures.join("\n"),
         });
     }
 
-    // Where the original games' data is, which the detail pane shows for
-    // every game rather than only the selected one, so it is looked for once
-    // at startup rather than on each switch.
+    // The detail pane shows this for every game rather than only the selected
+    // one, so it is looked for once at startup rather than on each switch.
     controller.perform(Effect::ScanGameData);
 
-    // Last, and only if wanted. After the first `SelectGame` for the same
-    // reason the repair banner is: that message bumps the generation. This
-    // effect carries none, so it would survive the bump either way, but
-    // issuing it after means the window is already populated before a request
-    // to GitHub is in flight, and a slow or hanging network cannot delay the
-    // first render.
+    // Last, so the window is already populated before a request to GitHub is
+    // in flight and a slow network cannot delay the first render.
     if controller.state.borrow().check_for_updates {
         controller.perform(Effect::CheckForUpdate);
     }
 
-    // The controller owns `Views`, and nothing drops either for the life of
-    // the process. Note `Views` declares its control fields after `actions`,
-    // and controls hold `actions` as an *unretained* target, so if this ever
-    // gains a real teardown path the drop order has to be revisited.
+    // The controller owns `Views`, and nothing drops either for the life of the
+    // process. `Views` declares its control fields after `actions`, and
+    // controls hold `actions` unretained, so a real teardown path would have to
+    // revisit the drop order.
     std::mem::forget(controller.clone());
 }
 
@@ -286,19 +228,17 @@ impl Controller {
     }
 
     /// Where game data is unpacked: whatever Settings says, or the default
-    /// beneath Turnstile's own directory.
-    ///
-    /// Read from the preference rather than from `UiState`, because this runs
-    /// where the effect is performed and a borrow of the state is not held
-    /// there. They cannot disagree: the same message writes both.
+    /// beneath Turnstile's own directory. Read from the preference rather than
+    /// `UiState`, which is not borrowed where effects are performed; the same
+    /// message writes both, so they cannot disagree.
     fn install_root(&self) -> PathBuf {
         self.prefs
             .install_root()
             .unwrap_or_else(default_install_root)
     }
 
-    /// Reduce, render, then perform. In this order, so the UI reflects the
-    /// new state before any slow work starts.
+    /// Reduce, render, then perform, so the UI reflects the new state before
+    /// any slow work starts.
     pub fn handle(self: &Rc<Self>, msg: Msg) {
         let effects = {
             let mut state = self.state.borrow_mut();
@@ -319,10 +259,9 @@ impl Controller {
             }
 
             // Serialized with every mutation, not just with other reads: a
-            // `remove` or a mode change running alongside this would have
-            // `installed()` and `active()` describing two different moments,
-            // and the popup would then be repopulated from a store layout
-            // that never existed.
+            // removal running alongside would have `installed()` and `active()`
+            // describing two different moments, and the popup would then show a
+            // store layout that never existed.
             Effect::LoadInstalled { generation, game } => {
                 storelock::spawn(move || {
                     let result = (|| {
@@ -335,16 +274,12 @@ impl Controller {
                 });
             }
 
-            // Deliberately *not* under the store lock: this is an HTTPS
-            // request and reads nothing on disk, so it has nothing to
-            // corrupt or be corrupted by. Putting it there would be actively
-            // harmful -- a slow or hanging GitHub request would hold every
-            // install, switch and removal behind it for as long as it took.
+            // Not under the store lock: an HTTPS request reads nothing on disk,
+            // and a hanging GitHub request would otherwise hold every install,
+            // switch and removal behind it.
             Effect::CheckForUpdate => {
-                // Failure is silence. No network, a rate limit, a body that
-                // will not parse: all reach `Ok(None)` and no banner appears.
-                // The alternative is an error dialog on launch about a check
-                // nobody asked for, which is a worse application.
+                // Failure is silence: no banner is a better application than an
+                // error dialog on launch about a check nobody asked for.
                 mainqueue::spawn(move || {
                     let found = GitHub::new()
                         .latest_turnstile(UPDATE_OWNER, UPDATE_REPO, env!("CARGO_PKG_VERSION"))
@@ -353,9 +288,7 @@ impl Controller {
                 });
             }
 
-            // Reads three directories and nothing else, so it is off the
-            // store lock: it cannot corrupt an install and an install cannot
-            // corrupt it.
+            // Reads three directories and nothing else, so it is off the lock.
             Effect::ScanGameData => {
                 mainqueue::spawn(move || {
                     let found = OriginalGame::ALL
@@ -429,9 +362,6 @@ impl Controller {
             }
 
             Effect::OpenUrl(url) => {
-                // Both safe in objc2-app-kit 0.3: checked against the
-                // resolved crate rather than copied from an example written
-                // against another version.
                 let workspace = NSWorkspace::sharedWorkspace();
                 if let Some(url) = NSURL::URLWithString(&NSString::from_str(&url)) {
                     workspace.openURL(&url);
@@ -457,32 +387,24 @@ impl Controller {
                 game,
                 tag,
             } => {
-                // Starting an install cancels whatever was already running,
-                // rather than merely not sharing a flag with it: the two
-                // would otherwise race the same destination in compatible
-                // mode, where every tag installs into `bin`. Taking the old
-                // flag out and setting it -- not just overwriting the slot
-                // -- is what makes that true. Replacing the slot without
-                // setting the old flag would leave that older worker
-                // running and no longer reachable by any later
-                // `CancelInFlight`, trading "un-cancelled" for
-                // "uncancellable": the same race, reached a different way.
+                // Starting an install cancels whatever was already running: in
+                // compatible mode the two would otherwise race the same `bin`.
+                // Taking the old flag out and setting it, rather than just
+                // overwriting the slot, is what makes that true -- otherwise
+                // the older worker keeps running and is no longer reachable by
+                // any later `CancelInFlight`.
                 let cancel = Arc::new(AtomicBool::new(false));
                 if let Some(previous) = self.cancel.replace(Some(cancel.clone())) {
                     previous.store(true, Ordering::Relaxed);
                 }
                 let include_develop = self.state.borrow().show_develop;
-                // The lock is held for the whole install, download
-                // included, rather than only for the two renames at the
-                // end. Splitting it would mean the staging directory this
-                // writes into is unprotected for the slow part, and the
-                // renames are then a second acquisition with a gap in front
-                // of them -- exactly the shape of interleaving this exists
-                // to remove. The cost is that a store read issued during a
-                // download queues behind it; every route to one first bumps
-                // the generation, which emits `Effect::CancelInFlight`, and
-                // `download.rs` checks that flag once per read, so the
-                // install it is queued behind is already stopping.
+                // The lock is held for the whole install, download included,
+                // rather than only for the two renames at the end: splitting it
+                // would leave the staging directory unprotected for the slow
+                // part and put a gap in front of the renames. A store read
+                // issued during a download queues behind it, but every route to
+                // one first emits `Effect::CancelInFlight`, so the install it
+                // is queued behind is already stopping.
                 storelock::spawn(move || {
                     let mut throttle = ProgressThrottle::new();
                     let result = (|| {
@@ -491,8 +413,7 @@ impl Controller {
                             .releases_for(game, include_develop, HostArch::current())
                             .map_err(|e| e.to_string())?;
                         // Every listed release already carries a download this
-                        // host can run, so there is no asset selection here and
-                        // no "nothing for your platform" failure to handle.
+                        // host can run, so there is no asset selection here.
                         let release = releases
                             .iter()
                             .find(|r| r.tag == tag)
@@ -503,16 +424,12 @@ impl Controller {
                             mode,
                             &tag,
                             &release.download,
-                            // Throttled here, at the point the message is
-                            // posted, rather than by making `apply`
-                            // cleverer: `apply` rebuilding both pop-ups on
-                            // every render is wasteful, but making it
-                            // incremental means diffing what is displayed
-                            // against what is in state, and that is a real
-                            // correctness risk traded for a cosmetic win.
-                            // Not throttled in `download.rs` either, so
-                            // core keeps reporting everything it knows and
-                            // the UI decides what it can use.
+                            // Throttled here rather than by making `apply`
+                            // incremental, which would mean diffing what is
+                            // displayed against what is in state: a real
+                            // correctness risk for a cosmetic win. Not
+                            // throttled in `download.rs` either, so core keeps
+                            // reporting everything it knows.
                             &mut |p| {
                                 if throttle.should_post(p, Instant::now()) {
                                     mainqueue::post(Msg::Progress {
@@ -528,26 +445,12 @@ impl Controller {
 
                         if mode == Mode::MultiVersion {
                             // `install` reports no name of its own, and the
-                            // directory it actually used need not equal
-                            // `tag` verbatim (sanitization, or a collision
-                            // walk if a different tag sanitizes the same
-                            // way). `activate` takes `Installed::name`, the
-                            // on-disk identity, never a display `tag` --
-                            // conflating the two is the bug the whole
-                            // codebase guards against, so the name is looked
-                            // up freshly here rather than assumed. Reloading
-                            // lists newest-modified first, and the entry
-                            // this install just wrote is the newest thing
-                            // with this tag, so the first match is correct
-                            // even when an older entry shares the same tag.
-                            //
-                            // A missing match here would mean the entry
-                            // `install` just wrote is not found by its own
-                            // tag, which install.rs's contract makes
-                            // practically unreachable -- but a silent no-op
-                            // is exactly the shape obligation #1 warns
-                            // against, so this errors rather than skipping
-                            // the activation quietly.
+                            // directory it used need not equal `tag` verbatim
+                            // (sanitization, or a collision walk). `activate`
+                            // takes `Installed::name`, never a display tag, so
+                            // the name is looked up freshly. Reloading lists
+                            // newest-modified first, so the first match is
+                            // correct even when an older entry shares the tag.
                             let installed = store.installed(mode).map_err(|e| e.to_string())?;
                             let name = installed
                                 .iter()
@@ -555,11 +458,9 @@ impl Controller {
                                 .map(|i| i.name.clone())
                                 .ok_or_else(|| {
                                     // Not "vanished": the same lookup also
-                                    // misses when the build is on disk and
-                                    // correct but its `.version` file
-                                    // cannot be read, since `describe`
-                                    // substitutes `UNKNOWN_TAG` and no
-                                    // entry then matches the tag asked for.
+                                    // misses when the build is correct but its
+                                    // `.version` file cannot be read, since
+                                    // `describe` substitutes `UNKNOWN_TAG`.
                                     err("the build was written but could not be identified afterwards; its version file may be unreadable")
                                 })?;
                             store.activate(mode, &name).map_err(|e| e.to_string())?;
@@ -583,31 +484,21 @@ impl Controller {
                 });
             }
 
-            // The only effect that performs two store operations, and the
-            // only place their ordering is decided. Both run on the one
-            // worker, in this order, with the delete reached only from the
-            // switch's success arm: `VersionStore::remove` refuses to
-            // delete the active version, and that refusal is what keeps
-            // `bin` from being left pointing at something that no longer
-            // exists. Nothing here weakens it -- the sequencing sits above
-            // the store precisely so the store's own guard stays absolute.
-            //
-            // The two failures are reported as different messages on
-            // purpose. A failed switch is an `Activated` error, because
-            // that is what actually failed and nothing was deleted; a
-            // failed delete is a `Removed` error, which also reloads,
-            // because by then the switch has already changed `bin`.
+            // The only effect that performs two store operations, and the only
+            // place their ordering is decided. Both run on one worker, with the
+            // delete reached only from the switch's success arm:
+            // `VersionStore::remove` refuses to delete the active version, and
+            // that refusal is what keeps `bin` from pointing at something that
+            // no longer exists.
             Effect::SwitchThenRemove {
                 generation,
                 game,
                 activate,
                 remove,
             } => {
-                // One acquisition around both phases, which is the whole
-                // point of `storelock::spawn` taking the closure rather than
-                // exposing a guard: the switch and the delete are a sequence
-                // whose ordering is the safety property, and a lock released
-                // between them would leave the gap open.
+                // One acquisition around both phases, which is why
+                // `storelock::spawn` takes the closure rather than exposing a
+                // guard: a lock released between them would leave the gap open.
                 storelock::spawn(move || match store_for(game) {
                     None => Msg::Activated {
                         generation,
@@ -617,11 +508,10 @@ impl Controller {
                 });
             }
 
-            // Two of these are issued from one `Msg::ToggleMultiVersion`,
-            // one per game, and they queue behind each other on the single
-            // lock. That is why there is one lock rather than one per game:
-            // a per-game lock would not serialize either of these against a
-            // per-game operation already running.
+            // Two of these are issued from one `Msg::ToggleMultiVersion` and
+            // queue behind each other on the single lock. That is why there is
+            // one lock rather than one per game: a per-game lock would not
+            // serialize these against a per-game operation already running.
             Effect::SetMode {
                 generation,
                 game,
@@ -643,16 +533,10 @@ impl Controller {
                 });
             }
 
-            // Deliberately *not* under the store lock. It mutates nothing:
-            // it execs a binary out of a build directory and watches it for
-            // half a second. The worst a concurrent removal can do to it is
-            // make the exec fail, which is reported as a launch error, and
-            // a build deleted from under an already-running game keeps
-            // running from the unlinked inode -- the user's saved games live
-            // in the game directory, not the build. Against that, taking the
-            // lock would hold every real store operation behind the
-            // half-second liveness probe below, and hold Play behind a
-            // multi-second removal it has nothing to do with.
+            // Not under the store lock: this mutates nothing, and the worst a
+            // concurrent removal can do is make the exec fail, which is
+            // reported as a launch error. Taking the lock would hold every
+            // store operation behind the half-second liveness probe.
             Effect::Launch { game, dir } => {
                 mainqueue::spawn(move || {
                     let result = install::launch(game, &dir).map_err(|e| e.to_string());
@@ -660,51 +544,29 @@ impl Controller {
                 });
             }
 
-            // The one effect with no worker: it only flips the flag
-            // whichever install is currently in flight is already
-            // watching, if any. Emitted on every generation bump, so a
-            // channel toggle mid-install cannot leave a second install of
-            // the same game running alongside the first. `install.rs` is
-            // hardened against crash debris, not against a concurrent
-            // second install of the same tag.
+            // The one effect with no worker: it flips the flag whichever install
+            // is in flight is already watching. Takes the flag out of the slot,
+            // since a set flag is never reused by a later install.
             //
-            // Takes the flag out of the slot rather than leaving it there:
-            // once set, a flag is never reused by a later install (see
-            // `Effect::Install`'s fresh `Arc::new` above), so there is
-            // nothing left for this slot to hold once it has been told to
-            // stop.
-            //
-            // Never fold this into a wildcard arm: silently doing nothing
-            // here looks identical to working, and the race it prevents is
-            // not one the tests can reach.
+            // Never fold this into a wildcard arm: silently doing nothing here
+            // looks identical to working, and the race it prevents is not one
+            // the tests can reach.
             Effect::CancelInFlight { generation: _ } => {
                 if let Some(flag) = self.cancel.borrow_mut().take() {
                     flag.store(true, Ordering::Relaxed);
                 }
             }
 
-            // Modals run on the main thread and feed their answer back in.
-            //
             // `name` is the on-disk identity, correct for the eventual
-            // `Effect::SwitchThenRemove` but not what a user should be
-            // asked to confirm: two entries can share a display `tag` while
-            // having different `name`s, so showing `name` verbatim could
-            // put a confusing collision-suffixed directory name in front of
-            // the user instead of the build version they actually picked.
+            // `Effect::SwitchThenRemove` but not what a user should be asked to
+            // confirm: two entries can share a display tag, so showing `name`
+            // could put a collision-suffixed directory name in front of them.
             //
             // The tag is looked up from the entry the *effect* names, never
-            // from the current selection, and that is load-bearing rather
-            // than stylistic. `NSAlert::runModal` below pumps a nested run
-            // loop, so an `InstalledLoaded` already in flight is delivered
-            // while the dialog is on screen and can reorder
-            // `state.installed` and move `selected_installed` underneath
-            // it. Re-reading the selection here would let that reshuffle
-            // put one build's name in the dialog while a different one is
-            // deleted. The lookup below runs before the modal opens, and
-            // the names the deletion uses were captured at click time (see
-            // `PendingRemoval` in `state.rs`), so both sides come from the
-            // same decision. Do not simplify either back into a read of
-            // `selected_installed`.
+            // from the current selection. `runModal` pumps a nested run loop,
+            // so an `InstalledLoaded` in flight can reorder `state.installed`
+            // while the dialog is open; re-reading the selection here would let
+            // that put one build's name in the dialog while another is deleted.
             Effect::ConfirmRemove { name } => {
                 let tag = {
                     let state = self.state.borrow();
@@ -728,21 +590,17 @@ impl Controller {
 }
 
 /// Switches to `activate`, and deletes `remove` only if that switch really
-/// happened. The whole of `Effect::SwitchThenRemove`'s ordering lives here,
-/// in one function on one thread, so there is a single place to read it and
-/// nowhere for another message to get between the two halves.
+/// happened. The whole of `Effect::SwitchThenRemove`'s ordering lives here, on
+/// one thread, so there is nowhere for another message to get between the two
+/// halves.
 ///
-/// The two failures deliberately report as different messages. A failed
-/// switch comes back as `Activated`, because the switch is what failed and
-/// nothing was deleted; a failed delete comes back as `Removed`, which also
+/// The failures report as different messages: a failed switch as `Activated`,
+/// because nothing was deleted; a failed delete as `Removed`, which also
 /// reloads, because by then `bin` has already moved.
 ///
-/// Nothing here relaxes `StoreError::RemoveActive`. That refusal is the
-/// last thing standing between a mistake in this sequence and a `bin`
-/// symlink pointing at a directory that has been deleted, so the sequencing
-/// sits above the store rather than inside it: if the switch below silently
-/// did nothing, `remove` would still refuse, and the user would get an
-/// error instead of a broken installation.
+/// Nothing here relaxes `StoreError::RemoveActive`: if the switch silently did
+/// nothing, `remove` would still refuse, and the user would get an error
+/// instead of a broken installation.
 fn switch_then_remove(
     store: &VersionStore,
     mode: Mode,
@@ -750,12 +608,10 @@ fn switch_then_remove(
     remove: &str,
     generation: u64,
 ) -> Msg {
-    // `activate` writes its symlink without checking that the target
-    // exists, so a name that stopped being installed between the click and
-    // here would leave `bin` dangling -- the one outcome this whole
-    // sequence exists to prevent. This is not a re-reading of the
-    // selection: the name acted on is still the caller's own, this only
-    // declines to act when that name no longer refers to anything.
+    // `activate` writes its symlink without checking that the target exists, so
+    // a name that stopped being installed between the click and here would
+    // leave `bin` dangling. Not a re-reading of the selection: the name acted
+    // on is still the caller's, this only declines when it refers to nothing.
     let switched = store
         .installed(mode)
         .map_err(|e| e.to_string())
@@ -780,13 +636,11 @@ fn switch_then_remove(
     }
 }
 
-/// Formats releases for the popup. No filtering happens here: a release that
-/// reaches this point already has a download this machine can run, because
-/// that was decided when the response was parsed.
+/// Formats releases for the popup. Nothing is filtered: a release reaching
+/// here already has a download this machine can run.
 fn to_rows(releases: Vec<Release>) -> Vec<ReleaseRow> {
-    // `age::now()`, not `time::OffsetDateTime::now_utc` directly: this
-    // crate's dependency list does not include `time` (see Global
-    // Constraints), so `now` is core's one exported door into it.
+    // `age::now()`, not `time::OffsetDateTime::now_utc`: this crate does not
+    // depend on `time`, so `now` is core's one exported door into it.
     let now = age::now();
     releases
         .into_iter()
@@ -813,7 +667,6 @@ mod tests {
     }
 
     /// Lays out `versions/<name>` for each name and makes the first one
-    /// active, which is the shape every removal starts from.
     fn store_with(label: &str, names: &[&str]) -> VersionStore {
         let store = VersionStore::new(scratch(label), GameId::OpenRCT2);
         for name in names {
@@ -853,10 +706,6 @@ mod tests {
         );
     }
 
-    /// The property the whole effect exists for: if the switch does not
-    /// happen, nothing is deleted. A name that is not installed stands in
-    /// for the switch failing, because `activate` would otherwise happily
-    /// write a symlink to it and leave `bin` dangling.
     #[test]
     fn a_failed_switch_deletes_nothing() {
         let store = store_with("failed-switch", &["v1", "v2"]);
@@ -883,9 +732,6 @@ mod tests {
         );
     }
 
-    /// `StoreError::RemoveActive` is untouched by any of this: asking to
-    /// delete the build that was just switched *to* still fails, and fails
-    /// as a removal rather than being quietly skipped.
     #[test]
     fn removing_the_build_just_switched_to_is_still_refused() {
         let store = store_with("remove-active", &["v1", "v2"]);
@@ -932,9 +778,6 @@ mod tests {
         assert!(throttle.should_post(downloading(0.05), at(base, 100)));
     }
 
-    /// The one thing a throttle must never do. Every report that says what
-    /// the app is *doing*, rather than how far along it is, goes through
-    /// regardless of how recently the last one did.
     #[test]
     fn status_transitions_are_never_throttled() {
         let base = Instant::now();

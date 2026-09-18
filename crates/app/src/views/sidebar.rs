@@ -13,9 +13,8 @@ use objc2_app_kit::{
 use objc2_foundation::{NSBundle, NSString, ns_string};
 use turnstile_core::game::GameId;
 
-/// Sidebar rows are always in this fixed order, independent of
-/// `GameId::ALL`'s own order: a future reordering there must not silently
-/// reorder the sidebar out from under a saved row selection.
+/// A fixed order, independent of `GameId::ALL`'s: a future reordering there
+/// must not silently reorder the sidebar out from under a saved selection.
 const ROWS: [GameId; 2] = [GameId::OpenRCT2, GameId::OpenLoco];
 
 pub fn row_count() -> isize {
@@ -26,20 +25,18 @@ pub fn game_for_row(row: isize) -> Option<GameId> {
     usize::try_from(row).ok().and_then(|i| ROWS.get(i).copied())
 }
 
-/// The inverse of `game_for_row`, so `apply` can keep the sidebar's own
-/// selection in sync with `state.selected_game` -- needed because nothing
-/// else does: a click already leaves the table selection where the user put
-/// it, but restoring the last-selected game from preferences at startup
-/// does not go through a click at all.
+/// The inverse of `game_for_row`. A click already leaves the table selection
+/// where the user put it, but restoring the last-selected game from
+/// preferences at startup does not go through a click at all.
 pub fn row_for_game(game: GameId) -> Option<usize> {
     ROWS.iter().position(|&g| g == game)
 }
 
 /// Builds the sidebar pane: a single-column table inside a scroll view,
-/// wrapped in the view controller `NSSplitViewItem::sidebarWithViewController`
-/// needs. Returns that controller (for the split view item) and the raw
-/// table view, so its data source and delegate can be attached once
-/// `Actions` exists.
+/// wrapped in the view controller
+/// `NSSplitViewItem::sidebarWithViewController` needs. Returns that controller
+/// and the raw table view, so its data source and delegate can be attached
+/// once `Actions` exists.
 pub fn build(mtm: MainThreadMarker) -> (Retained<NSViewController>, Retained<NSTableView>) {
     let table = NSTableView::new(mtm);
     table.setStyle(NSTableViewStyle::SourceList);
@@ -52,8 +49,8 @@ pub fn build(mtm: MainThreadMarker) -> (Retained<NSViewController>, Retained<NST
 
     let scroll = NSScrollView::new(mtm);
     scroll.setHasVerticalScroller(true);
-    // Lets the sidebar's translucent material show through instead of a
-    // flat table background painted on top of it.
+    // Lets the sidebar's translucent material show through instead of a flat
+    // table background painted on top of it.
     scroll.setDrawsBackground(false);
     scroll.setDocumentView(Some(&table));
 
@@ -63,12 +60,10 @@ pub fn build(mtm: MainThreadMarker) -> (Retained<NSViewController>, Retained<NST
     (controller, table)
 }
 
-/// Builds the cell view for one sidebar row: a 20x20 icon beside the game's
-/// name, both vertically centered via Auto Layout. A freshly created
-/// `NSTableCellView` starts at zero size, so anchoring the icon and label
-/// to its edges -- rather than placing them at fixed frames with an
-/// autoresizing mask -- is what keeps them positioned correctly once the
-/// table view gives the cell its real, non-zero frame.
+/// One sidebar row: a 20x20 icon beside the game's name, both vertically
+/// centered via Auto Layout. A freshly created `NSTableCellView` starts at zero
+/// size, so anchoring rather than fixed frames is what keeps them positioned
+/// once the table gives the cell its real frame.
 pub fn make_row_view(mtm: MainThreadMarker, game: GameId) -> Retained<NSTableCellView> {
     let cell = NSTableCellView::new(mtm);
 
@@ -132,11 +127,8 @@ fn load_icon(game: GameId) -> Option<Retained<NSImage>> {
     NSImage::initWithContentsOfFile(NSImage::alloc(), &NSString::from_str(&path))
 }
 
-/// Resolves an icon's path either from the app bundle (once Task 21's
-/// packaging script produces one) or, during `cargo run`, straight from the
-/// checkout -- the same fallback shape `strings.rs` uses for `.strings`
-/// files, since `cargo run` has no bundle around it for `NSBundle` to find
-/// anything in.
+/// Resolves an icon's path from the app bundle, or straight from the checkout
+/// during `cargo run`, which has no bundle for `NSBundle` to find anything in.
 fn icon_path(base_name: &str) -> Option<String> {
     let bundle = NSBundle::mainBundle();
     let name = NSString::from_str(base_name);

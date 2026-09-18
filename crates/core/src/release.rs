@@ -13,12 +13,9 @@ pub struct Download {
     pub bytes: u64,
 }
 
-/// A release we can actually install.
-///
-/// A release carrying no macOS build this host can run is filtered out while
-/// parsing and never becomes a `Release`, so there is no asset-selection step
-/// at install time and no way to offer the user a build that cannot be
-/// fetched.
+/// A release this host can actually install. One carrying no macOS build it
+/// can run is filtered out while parsing, so there is no asset-selection step
+/// at install time.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Release {
     pub tag: String,
@@ -96,8 +93,6 @@ mod tests {
 
     #[test]
     fn a_release_always_carries_a_download() {
-        // Structural: there is no constructor for a release without one, so
-        // nothing downstream has to handle the absent case.
         let r = rel("v1", None);
         assert!(r.download.url.ends_with(".zip"));
     }

@@ -72,10 +72,9 @@ impl Candidate {
     }
 
     /// An archive that is a game build, for a platform that might be ours.
-    ///
     /// An `Unknown` platform is accepted rather than discarded: a future
-    /// release might name a macOS build in a way we do not recognise, and
-    /// rejecting it outright would make the game silently uninstallable.
+    /// release might name a macOS build in a way this does not recognise, and
+    /// rejecting it would make the game silently uninstallable.
     pub fn is_usable(&self) -> bool {
         let is_archive = self.has(".zip") || self.has(".tar.gz") || self.has(".tgz");
         let is_build = !(self.has("symbols")
@@ -213,7 +212,6 @@ mod tests {
 
     #[test]
     fn an_arm64_build_does_not_run_on_intel() {
-        // Real case: OpenLoco publishes no Intel macOS build at all.
         let a = c("OpenLoco-v26.08-macos-arm64.zip");
         assert!(a.runs_on(HostArch::Arm64));
         assert!(!a.runs_on(HostArch::X86_64));
@@ -273,8 +271,6 @@ mod tests {
 
     #[test]
     fn a_future_split_build_picks_the_host_architecture() {
-        // Neither project ships this today. The ranking exists so that if
-        // either stops shipping universal binaries, nothing has to change.
         let split = [
             c("OpenRCT2-v9.9-macos-x86_64.zip"),
             c("OpenRCT2-v9.9-macos-arm64.zip"),

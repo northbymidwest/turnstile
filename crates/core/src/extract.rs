@@ -130,7 +130,6 @@ mod tests {
 
         let out = d.join("out");
         extract(&tgz, "/downloads/OpenRCT2-linux.tar.gz", &out).unwrap();
-        // The wrapper directory is gone; its contents sit directly in `out`.
         assert!(out.join("openrct2").exists(), "found {:?}", walk(&out));
         assert!(!out.join("OpenRCT2-1.0").exists());
     }
@@ -155,8 +154,6 @@ mod tests {
 
     #[test]
     fn the_extension_comes_from_the_url_not_the_temp_filename() {
-        // The downloaded file is a random temp name with no extension, so
-        // dispatch must use the URL path.
         let d = scratch("urlext");
         let zip = make_zip(&d, "payload.txt");
         let renamed = d.join("tmp-no-extension");

@@ -17,14 +17,12 @@ pub enum Mode {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Installed {
-    /// The `.version` file's contents, for display only. Two rows can
-    /// share a tag: `adopt_dir`'s free-name walk keeps the original
-    /// `.version` when it resolves a collision by renaming the directory,
-    /// not the tag inside it. Never pass this to `activate`/`remove`.
+    /// The `.version` file's contents, for display only. Two rows can share a
+    /// tag: `adopt_dir`'s free-name walk renames the directory, not the tag
+    /// inside it. Never pass this to `activate`/`remove`.
     pub tag: String,
-    /// The on-disk directory name under `versions/`. What `activate` and
-    /// `remove` take, and what `active(MultiVersion)` reports: always
-    /// unique, unlike `tag`.
+    /// The on-disk directory name under `versions/`, always unique. What
+    /// `activate` and `remove` take, and what `active(MultiVersion)` reports.
     pub name: String,
     pub dir: PathBuf,
     pub can_launch: bool,
@@ -38,9 +36,8 @@ pub struct VersionStore {
 #[derive(Debug, Clone)]
 pub struct DisableReport {
     /// The version that became the real `bin/`, or `None` when there was
-    /// nothing linked to collapse. An `Option` rather than an empty string:
-    /// the view renders this into "Now using {0}", and the empty-string
-    /// convention rendered that as "Now using " with nothing after it.
+    /// nothing linked to collapse. An `Option` rather than an empty string,
+    /// which the view rendered as "Now using " with nothing after it.
     pub kept: Option<String>,
     pub retained: Vec<Installed>,
     pub retained_bytes: u64,
@@ -50,14 +47,11 @@ fn io(e: std::io::Error) -> StoreError {
     StoreError::Io(e.to_string())
 }
 
-/// Rejects anything that is not exactly one ordinary path component.
-/// `activate`/`remove` take a directory name that must already exist under
-/// `versions/`; a name shaped like a path (a separator, `.`, `..`, empty,
-/// absolute) could retarget the operation at a directory it was never meant
-/// to reach. Rejecting rather than `sanitize_tag`-style rewriting matters
-/// here: rewriting a name that must already exist can silently make it name
-/// a different, real directory instead, which for `remove` means deleting a
-/// build the caller never named.
+/// Rejects anything that is not exactly one ordinary path component: a name
+/// shaped like a path could retarget `activate`/`remove` at a directory they
+/// were never meant to reach. Rejecting rather than rewriting, because
+/// rewriting a name that must already exist can silently make it name a
+/// different, real directory.
 fn validate_name(name: &str) -> Result<(), StoreError> {
     let mut components = std::path::Path::new(name).components();
     let Some(std::path::Component::Normal(_)) = components.next() else {
@@ -138,11 +132,9 @@ impl VersionStore {
             let entry = entry.map_err(io)?;
             let name = entry.file_name().to_string_lossy().to_string();
             // `.staging-*` and `.trash-*` are ours, not installations.
-            // `file_type()` does not follow symlinks (unlike `Path::is_dir`),
-            // so a symlink placed in `versions/` is not listed as one
-            // either: `remove`'s `remove_dir_all` cannot delete a symlink,
-            // so listing one here would report an entry `remove` could
-            // never act on.
+            // `file_type()` does not follow symlinks, so a symlink in
+            // `versions/` is skipped too: `remove_dir_all` cannot delete one,
+            // so listing it would report an entry `remove` could never act on.
             let Ok(ft) = entry.file_type() else { continue };
             if name.starts_with('.') || !ft.is_dir() {
                 continue;
@@ -189,15 +181,11 @@ impl VersionStore {
             return Err(StoreError::RequiresMultiVersion);
         }
         validate_name(name)?;
-        // `validate_name` proves the name is a safe single path component; it
-        // says nothing about whether that directory is actually there. Without
-        // this check, activating a name that no longer exists succeeds and
-        // leaves `bin` dangling -- which is not merely a broken launch. A
-        // dangling `bin` is the exact state behind this project's worst data
-        // loss: an earlier sweep treated "symlink_metadata succeeds" as "the
-        // destination is occupied", so a dangling link made it delete the only
-        // real build. Refusing here keeps that state unreachable from the one
-        // write path that could still create it.
+        // `validate_name` says nothing about whether the directory is there.
+        // Without this, activating a name that no longer exists leaves `bin`
+        // dangling -- the exact state behind this project's worst data loss,
+        // where a sweep read "symlink_metadata succeeds" as "occupied" and
+        // deleted the only real build.
         if !self.game.version_path(&self.dirs, name).is_dir() {
             return Err(StoreError::NoSuchVersion(name.to_string()));
         }
@@ -227,20 +215,17 @@ impl VersionStore {
             return Err(StoreError::RemoveActive);
         }
         let dir = self.game.version_path(&self.dirs, name);
-        // Redundant with `validate_name` today: a single validated path
-        // component always resolves under `versions_path()`. Kept anyway as
-        // the last check before an irreversible delete, so it still holds if
-        // `version_path` or the validation above ever change independently.
+        // Redundant with `validate_name` today, but kept as the last check
+        // before an irreversible delete, so it still holds if `version_path`
+        // or the validation ever change independently.
         if dir.parent() != Some(self.versions_path().as_path()) {
             return Err(StoreError::Tag(TagError::Reserved));
         }
-        // Reports rather than quietly succeeding, and symmetrically with
-        // `activate` above (closed by 0f42dcf). `describe` builds
-        // `Installed::name` with `to_string_lossy`, so a directory whose
-        // name is not valid UTF-8 yields a name full of U+FFFD that matches
-        // nothing on disk. Returning `Ok(())` for it told the UI the build
-        // had been deleted, the reload put it straight back, and no
-        // sequence of clicks could ever remove it.
+        // Reports rather than quietly succeeding. `describe` builds
+        // `Installed::name` with `to_string_lossy`, so a directory whose name
+        // is not valid UTF-8 yields U+FFFD that matches nothing on disk;
+        // returning `Ok(())` told the UI it was deleted and the reload put it
+        // straight back, with no sequence of clicks able to remove it.
         if !dir.exists() {
             return Err(StoreError::NoSuchVersion(name.to_string()));
         }
@@ -258,12 +243,9 @@ impl VersionStore {
 
     fn reconcile_multi(&self) -> Result<(), StoreError> {
         // A collapse that crashed after moving the active version out but
-        // before putting it back in place leaves it here, invisible to
-        // installed_multi (it isn't under versions/) and unreachable by any
-        // other repair path in this mode: it would stay a permanent, silent
-        // leak once bin no longer points at it. Fold it back into the store
-        // first, under a free name, so the rest of this function treats it
-        // like any other version.
+        // before putting it back leaves it here, invisible to
+        // `installed_multi` and unreachable by any other repair in this mode.
+        // Fold it back in first, under a free name.
         let incoming = self.game.game_path(&self.dirs).join(".bin.incoming");
         if incoming.is_dir() {
             self.adopt_dir(&incoming)?;
@@ -273,11 +255,9 @@ impl VersionStore {
         let meta = std::fs::symlink_metadata(&bin);
 
         match meta {
-            // A real directory: adopt it into the store.
             Ok(m) if m.file_type().is_dir() => {
                 self.adopt_bin()?;
             }
-            // A symlink: healthy if it resolves, otherwise re-point it.
             Ok(m) if m.file_type().is_symlink() => {
                 if !bin.exists() {
                     std::fs::remove_file(&bin).map_err(io)?;
@@ -285,7 +265,6 @@ impl VersionStore {
                 }
             }
             Ok(_) => {}
-            // Missing entirely.
             Err(_) => {
                 self.link_to_newest()?;
             }
@@ -298,8 +277,8 @@ impl VersionStore {
         let incoming = game_path.join(".bin.incoming");
         let bin = self.bin_path();
 
-        // A collapse that died after moving the version out but before
-        // putting it in place.
+        // A collapse that died after moving the version out but before putting
+        // it in place.
         if incoming.is_dir() {
             if std::fs::symlink_metadata(&bin)
                 .map(|m| m.file_type().is_symlink())
@@ -317,13 +296,10 @@ impl VersionStore {
             .map(|m| m.file_type().is_symlink())
             .unwrap_or(false);
 
-        // A dangling link: whatever it pointed at is gone (deleted or moved
-        // outside the app, e.g. versions/<tag> removed by hand), so nothing
-        // is behind it and unlinking destroys nothing. Mirrors the identical
-        // case in reconcile_multi. Without this, disable_multi_version below
-        // would try to resolve a version that no longer exists and fail
-        // every time reconcile runs, which would mean the app fails to
-        // start correctly on every launch in this state.
+        // A dangling link: whatever it pointed at is gone, so unlinking
+        // destroys nothing. Without this, `disable_multi_version` below would
+        // fail every time reconcile runs, so the app would fail to start
+        // correctly on every launch in this state.
         if is_link && !bin.exists() {
             std::fs::remove_file(&bin).map_err(io)?;
             return Ok(());
@@ -350,8 +326,8 @@ impl VersionStore {
         Ok(name)
     }
 
-    /// Moves a real directory into the store under a free name. Never
-    /// overwrites: walks to the first free `<tag>`, `<tag>-2`, ... name.
+    /// Moves a real directory into the store under a free name, walking to the
+    /// first free `<tag>`, `<tag>-2`, ... Never overwrites.
     fn adopt_dir(&self, src: &std::path::Path) -> Result<String, StoreError> {
         let versions = self.versions_path();
         std::fs::create_dir_all(&versions).map_err(io)?;
@@ -362,9 +338,8 @@ impl VersionStore {
 
         let mut name = base.clone();
         let mut n = 2;
-        // `symlink_metadata`, not `exists`: a dangling symlink at this name
-        // must still count as occupied, or the rename below fails with
-        // ENOTDIR after this loop reports the name as free.
+        // `symlink_metadata`, not `exists`: a dangling symlink here must count
+        // as occupied, or the rename below fails with ENOTDIR.
         while std::fs::symlink_metadata(versions.join(&name)).is_ok() {
             name = format!("{base}-{n}");
             n += 1;
@@ -391,21 +366,18 @@ impl VersionStore {
     /// `bin/`; every other version stays in `versions/` untouched.
     ///
     /// Ordered so an interruption is recoverable: move the version out to
-    /// `.bin.incoming`, drop the link, then move it into place. A crash at
-    /// any point leaves something `reconcile_compatible` can finish.
+    /// `.bin.incoming`, drop the link, then move it into place. A crash at any
+    /// point leaves something `reconcile_compatible` can finish.
     pub fn disable_multi_version(&self) -> Result<DisableReport, StoreError> {
         let game_path = self.game.game_path(&self.dirs);
         let bin = self.bin_path();
         let incoming = game_path.join(".bin.incoming");
 
-        // Checked before anything else, including the no-active-link branch
-        // below: if a previous collapse crashed before finishing, this
-        // directory currently holds that moved-but-not-yet-placed game
-        // build, and by the time `bin` is inspected the crash can look
-        // exactly like "nothing is linked" (a dangling symlink resolves to
-        // `false` just like a missing one). Deleting it, or reporting
-        // success while it sits there, would both misrepresent or destroy
-        // it. reconcile(Compatible) is what finishes an interrupted
+        // Checked before anything else: if a previous collapse crashed before
+        // finishing, this holds that moved-but-not-yet-placed build, and by
+        // the time `bin` is inspected the crash looks exactly like "nothing is
+        // linked" (a dangling symlink resolves to `false` just like a missing
+        // one). `reconcile(Compatible)` is what finishes an interrupted
         // collapse, so ask for that instead.
         if incoming.exists() {
             return Err(StoreError::Io(format!(
@@ -422,12 +394,8 @@ impl VersionStore {
             {
                 std::fs::remove_file(&bin).map_err(io)?;
             }
-            // Measured, not assumed to be zero. `retained` here is every
-            // build in the store, and the whole point of the dialog this
-            // feeds is to tell the user how much disk those builds occupy
-            // so they can decide whether to go back and delete some.
-            // Reporting "0 bytes" beside a non-empty list said there was
-            // nothing to reclaim.
+            // Measured, not assumed zero: the dialog this feeds exists to tell
+            // the user how much disk the retained builds occupy.
             let retained = self.installed_multi()?;
             let retained_bytes = retained.iter().map(|i| dir_size(&i.dir)).sum();
             return Ok(DisableReport {
@@ -466,11 +434,9 @@ fn dir_size(path: &std::path::Path) -> u64 {
             continue;
         };
         for entry in entries.flatten() {
-            // `file_type()` does not follow symlinks (unlike `metadata()`).
-            // macOS `.app` bundles routinely contain framework symlinks, so
-            // following them would double-count bytes in every retained
-            // build; an upward-pointing symlink would make this walk never
-            // terminate.
+            // `file_type()` does not follow symlinks. macOS `.app` bundles
+            // routinely contain framework symlinks, so following them would
+            // double-count bytes; an upward-pointing one would never terminate.
             let Ok(ft) = entry.file_type() else { continue };
             if ft.is_symlink() {
                 continue;
@@ -674,7 +640,6 @@ mod tests {
         store.activate(Mode::MultiVersion, "v1").unwrap();
         store.activate(Mode::MultiVersion, "v2").unwrap();
 
-        // No temporary link is left behind.
         assert!(!s.root.join("OpenRCT2/.bin.tmp").exists());
         assert!(store.bin_path().join("OpenRCT2.app").exists());
     }
@@ -771,7 +736,6 @@ mod tests {
 
         store.reconcile(Mode::MultiVersion).unwrap();
 
-        // The original is untouched and the adopted one landed beside it.
         assert_eq!(
             std::fs::read(s.root.join("OpenRCT2/versions/v1/marker")).unwrap(),
             b"original"
@@ -858,7 +822,6 @@ mod tests {
         assert_eq!(report.retained[0].tag, "v1");
         assert!(report.retained_bytes > 0);
 
-        // bin is a real directory again, holding what was active.
         let bin = store.bin_path();
         assert!(bin.is_dir());
         assert!(
@@ -875,10 +838,8 @@ mod tests {
         );
         assert_eq!(store.active(Mode::Compatible).unwrap(), Some("v2".into()));
 
-        // Nothing was deleted.
         assert!(s.root.join("OpenRCT2/versions/v1").is_dir());
 
-        // Re-enabling brings both back.
         store.enable_multi_version().unwrap();
         let tags: Vec<_> = store
             .installed(Mode::MultiVersion)
@@ -951,14 +912,10 @@ mod tests {
         assert!(!s.root.join("OpenRCT2/versions").exists());
     }
 
-    // --- Critical 1: `Installed.name` vs `Installed.tag` -----------------
-
     #[test]
     fn remove_and_the_active_guard_key_on_directory_name_not_display_tag() {
         let s = Scratch::new("nameidentity");
         let store = s.store();
-        // adopt_dir's free-name walk produces exactly this state on a
-        // collision: two directories, one shared `.version` tag.
         s.make_install(&s.root.join("OpenRCT2/versions/v1"), Some("v1"));
         s.make_install(&s.root.join("OpenRCT2/bin"), Some("v1"));
         store.reconcile(Mode::MultiVersion).unwrap();
@@ -978,14 +935,10 @@ mod tests {
             Some("v1-2".into())
         );
 
-        // Keyed on name, the active guard refuses the row that is really
-        // active...
         assert!(matches!(
             store.remove(Mode::MultiVersion, "v1-2"),
             Err(StoreError::RemoveActive)
         ));
-        // ...and removing the other row by its real name deletes only that
-        // one, leaving the active copy untouched.
         store.remove(Mode::MultiVersion, "v1").unwrap();
         assert!(!s.root.join("OpenRCT2/versions/v1").exists());
         assert!(
@@ -1012,7 +965,6 @@ mod tests {
             store.activate(Mode::MultiVersion, ""),
             Err(StoreError::Tag(_))
         ));
-        // Nothing was linked by any of the rejected calls.
         assert!(std::fs::symlink_metadata(store.bin_path()).is_err());
     }
 
@@ -1023,15 +975,10 @@ mod tests {
         s.make_install(&s.root.join("OpenRCT2/versions/v1"), Some("v1"));
         store.activate(Mode::MultiVersion, "v1").unwrap();
 
-        // The name is a perfectly valid single path component, so
-        // `validate_name` passes it; only the existence check stops it.
         assert!(matches!(
             store.activate(Mode::MultiVersion, "v2"),
             Err(StoreError::NoSuchVersion(_))
         ));
-        // The refusal left the previously working link alone rather than
-        // replacing it with a dangling one: a failed switch must not cost the
-        // user the build they already had.
         assert_eq!(
             std::fs::read_link(store.bin_path()).unwrap(),
             PathBuf::from("versions/v1")
@@ -1043,8 +990,6 @@ mod tests {
         let s = Scratch::new("removetraversal");
         let store = s.store();
         s.make_install(&s.root.join("OpenRCT2/versions/v1"), Some("v1"));
-        // A hostile or corrupted `.version` file must not double as a path:
-        // `tag` is display-only precisely because of input like this.
         s.make_install(&s.root.join("OpenRCT2/versions/evil"), Some("../../etc"));
 
         let installed = store.installed(Mode::MultiVersion).unwrap();
@@ -1055,13 +1000,9 @@ mod tests {
             store.remove(Mode::MultiVersion, &evil.tag),
             Err(StoreError::Tag(_))
         ));
-        // Nothing was deleted: not `versions/v1`, and not `evil` itself.
         assert!(s.root.join("OpenRCT2/versions/v1").is_dir());
         assert!(s.root.join("OpenRCT2/versions/evil").is_dir());
     }
-
-    // --- Important 1: the stray-`.bin.incoming` guard must cover both
-    // branches of `disable_multi_version` --------------------------------
 
     #[test]
     fn disabling_over_a_stray_incoming_directory_is_refused() {
@@ -1086,10 +1027,6 @@ mod tests {
     fn disabling_over_a_stray_incoming_directory_is_refused_even_with_no_active_link() {
         let s = Scratch::new("strayincomingnolink");
         let store = s.store();
-        // bin is absent, which is exactly what a dangling link left behind
-        // by a crashed disable_multi_version also looks like through
-        // active_multi. The old no-active branch reported success here
-        // without ever looking at incoming.
         s.make_install(&s.root.join("OpenRCT2/.bin.incoming"), Some("v1"));
 
         assert!(store.disable_multi_version().is_err());
@@ -1099,11 +1036,6 @@ mod tests {
         );
     }
 
-    /// I3: the branch taken when `bin` is absent or points outside
-    /// `versions/` used to hard-code zero bytes and an empty `kept`, so the
-    /// dialog told the user their retained builds occupied "0 bytes" -- the
-    /// one number the dialog exists to give them, and the one that says
-    /// there is nothing to reclaim.
     #[test]
     fn disabling_with_nothing_linked_still_measures_the_builds_it_retains() {
         let s = Scratch::new("disablenolink");
@@ -1111,8 +1043,6 @@ mod tests {
         s.make_install(&s.root.join("OpenRCT2/versions/v1"), Some("v1"));
         s.make_install(&s.root.join("OpenRCT2/versions/v2"), Some("v2"));
         std::fs::write(s.root.join("OpenRCT2/versions/v1/payload"), vec![0u8; 4096]).unwrap();
-        // No `bin` at all: reachable after a manual `rm`, and as the tail of
-        // an interrupted mode change.
         assert!(std::fs::symlink_metadata(store.bin_path()).is_err());
 
         let report = store.disable_multi_version().unwrap();
@@ -1134,12 +1064,6 @@ mod tests {
         assert!(s.root.join("OpenRCT2/versions/v2").is_dir());
     }
 
-    /// Deferred item 1's `remove` half, now symmetrical with `activate`.
-    /// `Installed::name` comes from `to_string_lossy`, so a directory whose
-    /// name is not valid UTF-8 produces a name full of U+FFFD that matches
-    /// nothing on disk. Reporting success for it told the UI the build was
-    /// deleted while the next reload put it straight back, and no sequence
-    /// of clicks could ever remove it.
     #[test]
     fn removing_a_name_with_no_directory_reports_rather_than_silently_succeeding() {
         let s = Scratch::new("removeghost");
@@ -1157,9 +1081,6 @@ mod tests {
         );
     }
 
-    // --- Important 2: compatible-mode reconcile must repair a dangling
-    // symlink instead of erroring forever ---------------------------------
-
     #[test]
     fn compatible_reconcile_repairs_a_dangling_symlink() {
         let s = Scratch::new("compatdangling");
@@ -1174,9 +1095,6 @@ mod tests {
             "dangling link should be gone"
         );
     }
-
-    // --- Important 3: multi-version reconcile must adopt a stray
-    // `.bin.incoming` instead of leaving it invisible ----------------------
 
     #[test]
     fn reconcile_multi_adopts_a_stray_incoming_directory() {
@@ -1199,15 +1117,12 @@ mod tests {
         assert!(tags.contains(&"v2".to_string()));
     }
 
-    // --- Important 4: `dir_size` must not follow symlinks -----------------
-
     #[test]
     fn dir_size_does_not_follow_symlinks() {
         let s = Scratch::new("dirsize");
         let dir = s.root.join("payload");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("data.bin"), vec![0u8; 100]).unwrap();
-        // An upward-pointing symlink: following it would recurse forever.
         std::os::unix::fs::symlink(&s.root, dir.join("loop")).unwrap();
 
         assert_eq!(dir_size(&dir), 100);

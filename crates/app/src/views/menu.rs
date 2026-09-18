@@ -1,9 +1,8 @@
 //! The application's main menu bar.
 //!
-//! Not optional. Without a main menu, Command-Q does not quit and Command-C
-//! does not work in a text field, because both route through standard
-//! responder selectors that only exist once a menu is installed. Avalonia
-//! supplies this implicitly upstream; AppKit does not.
+//! Not optional: without one, Command-Q does not quit and Command-C does not
+//! work in a text field, because both route through standard responder
+//! selectors that only exist once a menu is installed.
 
 use std::ffi::CString;
 
@@ -24,8 +23,7 @@ pub fn install(mtm: MainThreadMarker) {
             ("About Turnstile", "orderFrontStandardAboutPanel:", ""),
             ("-", "", ""),
             // No target, so this travels the responder chain to the
-            // application delegate, which implements it. The menu is built
-            // before `Actions` exists, so it cannot point at that directly.
+            // application delegate, which implements it.
             ("Settings...", "showSettings:", ","),
             ("-", "", ""),
             ("Hide Turnstile", "hide:", "h"),
@@ -63,12 +61,10 @@ pub fn install(mtm: MainThreadMarker) {
     }
 }
 
-/// Builds a top-level menu bar item carrying a submenu of the given entries.
-/// `"-"` becomes a separator; every other entry becomes a titled item whose
-/// action is resolved by name and sent up the responder chain (no target is
-/// set, so whichever object down the chain implements the selector handles
-/// it -- which is the whole point of using AppKit's standard selectors here
-/// rather than writing our own).
+/// Builds a top-level menu bar item carrying a submenu. `"-"` becomes a
+/// separator; every other entry becomes a titled item whose action is resolved
+/// by name and sent up the responder chain, so whichever object implements the
+/// selector handles it.
 fn submenu(
     mtm: MainThreadMarker,
     title: &str,
@@ -103,9 +99,8 @@ fn submenu(
     top
 }
 
-/// Resolves a selector by name. The dynamic counterpart of `objc2::sel!`,
-/// needed here because the selector names above come from a runtime table
-/// rather than individual literals.
+/// Resolves a selector by name: the dynamic counterpart of `objc2::sel!`,
+/// needed because the names above come from a runtime table.
 fn sel_name(name: &str) -> Sel {
     let c_name = CString::new(name).expect("selector name must not contain NUL bytes");
     Sel::register(&c_name)

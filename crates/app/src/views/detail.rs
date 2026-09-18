@@ -20,9 +20,8 @@ use turnstile_core::gamedata::OriginalGame;
 use crate::actions::Actions;
 use crate::strings;
 
-/// The controls `apply` needs a handle on, in the shape `Views` wants them
-/// destructured into. This type exists only to get all eleven out of `build`
-/// in one call; nothing keeps it around afterward.
+/// The controls `apply` needs a handle on. This type exists only to get them
+/// all out of `build` in one call.
 pub struct Detail {
     pub installed_popup: Retained<NSPopUpButton>,
     pub play_button: Retained<NSButton>,
@@ -35,27 +34,24 @@ pub struct Detail {
     pub title_label: Retained<NSTextField>,
     pub version_label: Retained<NSTextField>,
     /// One row per original game, in `OriginalGame::ALL` order. All three are
-    /// built once and hidden or shown, because which are relevant depends on
-    /// the selected game and rebuilding a row is how a button loses its
-    /// target.
+    /// built once and hidden or shown, because rebuilding a row is how a
+    /// button loses its target.
     pub game_data: Vec<GameDataRow>,
 }
 
 /// The state of one original game's data, and the button that changes it.
 pub struct GameDataRow {
     pub game: OriginalGame,
-    /// Hidden when the row is about a game other than the selected one. The
-    /// title is not kept: it names a game and never changes, and the stack
-    /// view holds it.
+    /// Hidden when the row is about a game other than the selected one.
     pub container: Retained<NSStackView>,
     pub path: Retained<NSTextField>,
     pub button: Retained<NSButton>,
 }
 
-/// Builds the detail pane: a vertical `NSStackView` of horizontal rows, each
-/// created inline below because none of them is reused. Returns the view
-/// controller `NSSplitViewItem::splitViewItemWithViewController` needs, and
-/// every control `apply` writes to.
+/// Builds the detail pane: a vertical `NSStackView` of horizontal rows.
+/// Returns the view controller
+/// `NSSplitViewItem::splitViewItemWithViewController` needs, and every control
+/// `apply` writes to.
 pub fn build(mtm: MainThreadMarker, actions: &Actions) -> (Retained<NSViewController>, Detail) {
     // SAFETY: `actions` is retained by `Views` for the app's lifetime, which
     // outlives every control built below.
@@ -71,17 +67,15 @@ pub fn build(mtm: MainThreadMarker, actions: &Actions) -> (Retained<NSViewContro
     });
     root.setSpacing(12.0);
 
-    // Row 1: header -- game name, a spacer, then the launcher version.
     let title_label = label(mtm, "");
-    // SAFETY: reading this extern weight constant is always sound; it is an
-    // immutable value AppKit provides, not one that can be misused.
+    // SAFETY: reading this extern weight constant is always sound.
     let semibold = unsafe { NSFontWeightSemibold };
     title_label.setFont(Some(&NSFont::systemFontOfSize_weight(24.0, semibold)));
 
     let spacer = NSView::new(mtm);
     // An empty view has no intrinsic size to hug, but its hugging priority
-    // still defaults to the same value as the labels either side of it;
-    // lowering it explicitly is what makes it the one that stretches.
+    // still defaults to the labels' value; lowering it is what makes it the
+    // one that stretches.
     spacer.setContentHuggingPriority_forOrientation(
         NSLayoutPriorityDefaultLow,
         NSLayoutConstraintOrientation::Horizontal,
@@ -96,7 +90,6 @@ pub fn build(mtm: MainThreadMarker, actions: &Actions) -> (Retained<NSViewContro
     header_row.addArrangedSubview(&version_label);
     root.addArrangedSubview(&header_row);
 
-    // Row 2-3: installed versions.
     let installed_label = small_secondary_label(mtm, &strings::get("InstalledLabel"));
     root.addArrangedSubview(&installed_label);
 
@@ -118,8 +111,7 @@ pub fn build(mtm: MainThreadMarker, actions: &Actions) -> (Retained<NSViewContro
             mtm,
         )
     };
-    // The window's default button: Return activates it regardless of which
-    // control has focus.
+    // The window's default button: Return activates it whatever has focus.
     play_button.setKeyEquivalent(ns_string!("\r"));
 
     // SAFETY: `target` outlives `remove_button`, and `removeClicked:` is a
@@ -139,7 +131,6 @@ pub fn build(mtm: MainThreadMarker, actions: &Actions) -> (Retained<NSViewContro
     installed_row.addArrangedSubview(&remove_button);
     root.addArrangedSubview(&installed_row);
 
-    // Row 4-6: available releases, plus the progress bar beneath them.
     let available_label = small_secondary_label(mtm, &strings::get("AvailableLabel"));
     root.addArrangedSubview(&available_label);
 
@@ -170,23 +161,14 @@ pub fn build(mtm: MainThreadMarker, actions: &Actions) -> (Retained<NSViewContro
     let progress = NSProgressIndicator::new(mtm);
     progress.setStyle(NSProgressIndicatorStyle::Bar);
     // Set explicitly because `NSProgressIndicator`'s defaults are 0.0 and
-    // **100.0**, not 0.0 and 1.0, while every value written to it is the
-    // 0.0-to-1.0 fraction `download.rs` reports. Left at the default the
-    // bar fills at most one percent of its width over a whole download,
-    // which is indistinguishable from a bar that never moves at all -- the
-    // symptom Task 22's smoke test recorded as 76 byte-identical frames.
-    // Measured, not assumed: a bare `[[NSProgressIndicator alloc] init]`
-    // reports `maxValue == 100`, and its accessibility value is
-    // `doubleValue / maxValue`, which is why the fractions the smoke test
-    // read back off the control were a hundredth of the ones being written.
+    // **100.0**, while every value written to it is the 0.0-to-1.0 fraction
+    // `download.rs` reports. Left at the default, the bar fills at most one
+    // percent of its width over a whole download.
     progress.setMinValue(0.0);
     progress.setMaxValue(1.0);
     progress.setHidden(true);
     root.addArrangedSubview(&progress);
 
-    // Row 7: the three preference checkboxes.
-    // SAFETY: `target` outlives `develop_check`, and `developToggled:` is a
-    // real selector `Actions` defines below.
     let develop_check = unsafe {
         NSButton::checkboxWithTitle_target_action(
             &NSString::from_str(&strings::get("ShowDevelopmentVersions")),
@@ -229,8 +211,8 @@ pub fn build(mtm: MainThreadMarker, actions: &Actions) -> (Retained<NSViewContro
                     mtm,
                 )
             };
-            // Which game the button means, taken from the same list it was
-            // built from rather than written out again.
+            // Which game the button means, from the same list it was built
+            // from rather than written out again.
             button.setTag(NSInteger::try_from(index).unwrap_or(0));
 
             let text = NSStackView::new(mtm);
@@ -275,8 +257,7 @@ pub fn build(mtm: MainThreadMarker, actions: &Actions) -> (Retained<NSViewContro
     )
 }
 
-/// A horizontal row for the stack view above -- just a container, so its
-/// only settings are orientation and inter-item spacing.
+/// A horizontal row for the stack view above.
 fn row(mtm: MainThreadMarker) -> Retained<NSStackView> {
     let stack = NSStackView::new(mtm);
     stack.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
@@ -292,9 +273,8 @@ fn secondary(field: &NSTextField) {
     field.setTextColor(Some(&NSColor::secondaryLabelColor()));
 }
 
-/// `InstalledLabel` and `AvailableLabel` are both this: a small caption
-/// above the row it introduces, styled to read as secondary rather than
-/// as a field label demanding equal weight with the controls below it.
+/// A small caption above the row it introduces, styled to read as secondary
+/// rather than as a field label demanding equal weight with the controls.
 pub(crate) fn small_secondary_label(mtm: MainThreadMarker, text: &str) -> Retained<NSTextField> {
     let field = label(mtm, text);
     field.setFont(Some(&NSFont::systemFontOfSize(
@@ -304,9 +284,8 @@ pub(crate) fn small_secondary_label(mtm: MainThreadMarker, text: &str) -> Retain
     field
 }
 
-/// The name of an original game, which is a product name and so the same in
-/// every language. Nothing here goes through the string table, because a
-/// translation of "RollerCoaster Tycoon 2" would be a mistranslation.
+/// The name of an original game. Not in the string table: a translation of
+/// "RollerCoaster Tycoon 2" would be a mistranslation.
 const fn title_of(game: OriginalGame) -> &'static str {
     match game {
         OriginalGame::RollerCoasterTycoon1 => "RollerCoaster Tycoon",

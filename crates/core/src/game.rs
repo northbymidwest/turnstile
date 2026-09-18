@@ -25,8 +25,8 @@ impl fmt::Display for RepositoryName {
     }
 }
 
-/// The games this launcher knows about. Everything else about a game
-/// derives from this, so there is no way to name one that does not exist.
+/// The games this launcher knows about. Everything else about a game derives
+/// from this, so there is no way to name one that does not exist.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GameId {
     OpenRCT2,
@@ -45,9 +45,8 @@ impl GameId {
         }
     }
 
-    /// Stable identifier for preferences. Persisting this instead of an
-    /// index means adding or reordering games cannot silently change a
-    /// user's saved selection.
+    /// Stable identifier for preferences. Persisting this instead of an index
+    /// means adding or reordering games cannot change a saved selection.
     pub fn key(self) -> &'static str {
         self.display_name()
     }
@@ -56,13 +55,11 @@ impl GameId {
         GameId::ALL.into_iter().find(|g| g.key() == key)
     }
 
-    /// This game's position in `ALL`, so a caller can hold one value per
-    /// game in a plain array. A `match` rather than a search through `ALL`:
-    /// adding a game then fails to compile here instead of silently
-    /// returning the wrong slot, and the result needs no bounds check.
+    /// This game's position in `ALL`, so a caller can hold one value per game
+    /// in a plain array. A `match` rather than a search, so adding a game fails
+    /// to compile here instead of silently returning the wrong slot.
     ///
-    /// Never persisted. `key` exists for that, precisely because an index
-    /// changes meaning when the list is reordered.
+    /// Never persisted; `key` exists for that.
     pub fn index(self) -> usize {
         match self {
             GameId::OpenRCT2 => 0,
@@ -132,11 +129,9 @@ pub fn sanitize_tag(tag: &str) -> Result<String, TagError> {
     if cleaned == "." || cleaned == ".." {
         return Err(TagError::Reserved);
     }
-    // A leading dot is this crate's reserved namespace for staging, trash
-    // and marker files (`.staging-`, `.trash-`, ...); a sanitized tag that
-    // began with one would also fall outside `installed_multi`'s directory
-    // listing, which skips dot-prefixed names. Replace rather than reject:
-    // only the shape is hostile here, not the tag's identity.
+    // A leading dot is this crate's reserved namespace for staging, trash and
+    // marker files, and would also fall outside `installed_multi`'s directory
+    // listing. Replaced rather than rejected: only the shape is hostile here.
     if cleaned.starts_with('.') {
         cleaned.replace_range(0..1, "-");
     }
@@ -185,9 +180,7 @@ mod tests {
         }
     }
 
-    /// What every per-game array indexed by `index` relies on: the slot a
-    /// game names is the slot `ALL` holds it in, for every game and with no
-    /// slot shared.
+    /// What every per-game array indexed by `index` relies on.
     #[test]
     fn index_addresses_the_games_own_slot_in_all() {
         for g in GameId::ALL {
@@ -198,7 +191,6 @@ mod tests {
 
     #[test]
     fn an_unknown_key_is_rejected_rather_than_guessed() {
-        // This is what protects a saved selection when the game list changes.
         assert_eq!(GameId::from_key("OpenTTD"), None);
         assert_eq!(GameId::from_key(""), None);
         assert_eq!(GameId::from_key("0"), None);
@@ -279,9 +271,6 @@ mod tests {
 
     #[test]
     fn a_sanitized_tag_never_begins_with_a_dot() {
-        // A leading dot would land in this crate's reserved namespace for
-        // staging/trash/marker files, and would make the directory invisible
-        // to `installed_multi`'s dot-prefix filter.
         assert_eq!(sanitize_tag(".foo").unwrap(), "-foo");
         assert!(!sanitize_tag(".foo").unwrap().starts_with('.'));
         assert!(!sanitize_tag("../../etc/passwd").unwrap().starts_with('.'));

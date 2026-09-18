@@ -40,8 +40,7 @@ pub fn build(
 
     let sidebar_item = NSSplitViewItem::sidebarWithViewController(sidebar);
     // The single call that supplies translucency, the inset titlebar, and
-    // correct collapse behavior -- most of what makes this read as a Mac
-    // app rather than a port.
+    // correct collapse behavior.
     sidebar_item.setMinimumThickness(180.0);
     sidebar_item.setMaximumThickness(240.0);
     split.addSplitViewItem(&sidebar_item);
@@ -51,10 +50,8 @@ pub fn build(
 
     window.setContentViewController(Some(&split));
 
-    // Must come after the content view controller is set: the autosaved
-    // frame this restores is meaningless without content to size around,
-    // and `center()` before restoring would just be overwritten anyway on
-    // a run where a saved frame exists.
+    // Must come after the content view controller is set: the autosaved frame
+    // this restores is meaningless without content to size around.
     window.center();
     window.setFrameAutosaveName(ns_string!("MainWindow"));
 

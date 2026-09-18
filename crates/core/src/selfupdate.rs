@@ -1,10 +1,9 @@
 //! Whether a newer Turnstile has been published.
 //!
-//! Deliberately separate from `github::releases`, which exists to find a game
-//! build this host can run. That path classifies assets and drops any release
-//! with nothing installable, and Turnstile ships a `.dmg`, which it does not
-//! recognise. Reusing it would have found zero releases and reported "up to
-//! date" forever: a check that always passes, which is worse than no check.
+//! Separate from `github::releases`, which exists to find a game build this
+//! host can run: that path drops any release with nothing installable, and
+//! Turnstile ships a `.dmg`, which it does not recognise. Reusing it would
+//! have reported "up to date" forever.
 //!
 //! This reads two fields and downloads nothing. The banner it feeds opens the
 //! releases page; replacing a running, notarized bundle in place is a
@@ -18,9 +17,7 @@ use crate::github::GitHub;
 /// A published release newer than the version asking.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Update {
-    /// The tag as published, for display. Not parsed beyond the comparison.
     pub version: String,
-    /// Where to send somebody who wants it.
     pub url: String,
 }
 
@@ -31,21 +28,16 @@ struct ApiRelease {
 }
 
 /// Parses `/releases/latest` and reports an update only if the published
-/// version is strictly greater than `current`.
-///
-/// Strictly greater, rather than merely different, so a local build ahead of
-/// the feed does not nag, and a tag that gets moved or a release that gets
-/// deleted and recut cannot announce itself as an upgrade. A tag this cannot
-/// parse is ignored for the same reason: announcing an update on a version
-/// nobody can compare is worse than staying quiet.
+/// version is strictly greater than `current`, so a local build ahead of the
+/// feed does not nag and a moved or recut tag cannot announce itself as an
+/// upgrade. A tag this cannot parse is ignored for the same reason.
 pub fn parse_latest(json: &str, current: &str) -> Result<Option<Update>, CoreError> {
     let api: ApiRelease = serde_json::from_str(json).map_err(|e| CoreError::Json(e.to_string()))?;
     let Some(published) = semver(api.tag_name.trim_start_matches('v')) else {
         return Ok(None);
     };
-    // Stripped on both sides. `current` is CARGO_PKG_VERSION today, which
-    // carries no prefix, but accepting it on one side and not the other is a
-    // trap for whoever passes a tag here later.
+    // Stripped on both sides: `current` carries no prefix today, but accepting
+    // it on one side and not the other is a trap for a later caller.
     let Some(running) = semver(current.trim_start_matches('v')) else {
         return Ok(None);
     };
@@ -56,9 +48,7 @@ pub fn parse_latest(json: &str, current: &str) -> Result<Option<Update>, CoreErr
 }
 
 /// `major.minor.patch` and nothing else. A pre-release or build suffix makes
-/// this `None`, which is how pre-releases are ignored without a second rule:
-/// `/releases/latest` already excludes them, and anything that reaches here
-/// wearing one is not something to advertise.
+/// this `None`, which is how pre-releases are ignored without a second rule.
 fn semver(s: &str) -> Option<(u64, u64, u64)> {
     let mut parts = s.split('.');
     let major = parts.next()?.parse().ok()?;
@@ -71,10 +61,8 @@ fn semver(s: &str) -> Option<(u64, u64, u64)> {
 }
 
 impl GitHub {
-    /// Asks whether a release newer than `current` exists.
-    ///
-    /// `/releases/latest` rather than the list: GitHub excludes drafts and
-    /// pre-releases from it, so ignoring those costs nothing here.
+    /// Asks whether a release newer than `current` exists. `/releases/latest`
+    /// rather than the list: GitHub excludes drafts and pre-releases from it.
     pub fn latest_turnstile(
         &self,
         owner: &str,
@@ -108,7 +96,6 @@ mod tests {
 
     #[test]
     fn an_older_release_is_not_an_update() {
-        // A local build ahead of the feed must not be told to downgrade.
         assert_eq!(parse_latest(&body("v0.1.0"), "0.2.0").unwrap(), None);
     }
 
@@ -120,8 +107,6 @@ mod tests {
 
     #[test]
     fn each_component_is_compared_as_a_number_not_a_string() {
-        // The reason this is parsed rather than compared as text: "0.10.0"
-        // sorts before "0.9.0" lexically and is newer numerically.
         assert!(parse_latest(&body("v0.10.0"), "0.9.0").unwrap().is_some());
         assert_eq!(parse_latest(&body("v0.9.0"), "0.10.0").unwrap(), None);
     }
