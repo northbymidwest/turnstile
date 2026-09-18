@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.3.0 - 2026-09-18
+
+### Added
+
+- Installs the original games' data from the Windows installers sold by GOG.
+  OpenRCT2 and OpenLoco reimplement the game engines, not the games, and need the
+  graphics, sounds and scenarios from the original release before they will run.
+  There was nothing to point them at on a Mac, because these games were never
+  released for one. Turnstile now reads the installer, puts the game in a
+  directory, and tells the game where it is.
+- A "Game data" section in each game's pane, showing where its data is or that it
+  is missing. OpenRCT2 shows both RollerCoaster Tycoon 2, which it needs, and
+  RollerCoaster Tycoon 1, whose scenarios and objects it uses when they are there.
+  A game whose data is missing used to start and then fail with nothing said in
+  advance.
+- A setting for where game data is unpacked, with the default under Turnstile's
+  own directory, and a button beside it to go back to that default.
+
+### Changed
+
+- Where a game's data is comes from the game's own configuration rather than from
+  Turnstile's settings, so a directory chosen by hand, or years ago, is found and
+  shown rather than quietly replaced.
+
 ## 0.2.0 - 2026-09-17
 
 ### Added
