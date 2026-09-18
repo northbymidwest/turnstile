@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.2.0 - 2026-09-17
+
+### Added
+
+- Checks on launch whether a newer Turnstile has been released, and offers to open the
+  releases page if there is one. Nothing is downloaded or installed, prereleases are
+  ignored, and a check that fails says nothing rather than reporting a problem you did
+  not ask about.
+- A Settings window, on Command-comma, for the settings that are about the application
+  rather than about a game. "Keep multiple versions installed" moves there from the
+  main window, and the update check joins it. The two settings that stay in the main
+  window are per-game.
+- Finder files Turnstile under Games when applications are arranged by category.
+
+### Fixed
+
+- Closing the window quits the application. It used to keep running with no window and
+  no way to get one back.
+
+### Changed
+
+- The list of available builds is fetched once per game and kept, so switching between
+  OpenRCT2 and OpenLoco no longer refetches it.
+
 ## 0.1.0 - 2026-09-17
 
 First release.
