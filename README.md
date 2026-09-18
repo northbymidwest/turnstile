@@ -52,7 +52,7 @@ not pin a compiler version: `rust-version` in `Cargo.toml` enforces the minimum.
 ```
 cargo test          # the full suite, no window server needed
 cargo run -p turnstile
-./scripts/bundle.sh # universal .app, Developer ID signed if a cert is present
+./scripts/bundle.sh
 ```
 
 ## License
