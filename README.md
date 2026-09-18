@@ -24,27 +24,6 @@ Or build it yourself:
 open dist/Turnstile.app
 ```
 
-`bundle.sh` signs with a Developer ID Application identity if it finds one in your
-keychain, and ad-hoc otherwise. It tells you which one it used.
-
-An ad-hoc signature is fine for running the app on the machine that built it, but macOS
-will refuse to open it anywhere else. If you need to move such a build to another Mac,
-either notarize it (below) or clear the quarantine flag on the receiving machine with
-`xattr -d com.apple.quarantine Turnstile.app`.
-
-To produce something you can hand to someone else, notarize it. This needs an Apple
-Developer account and credentials stored once in a keychain profile:
-
-```
-xcrun notarytool store-credentials turnstile-notary \
-  --apple-id <your-apple-id> --team-id <your-team-id>
-./scripts/notarize.sh
-```
-
-`notarize.sh` submits the bundle to Apple, waits, staples the ticket into it, and then
-verifies it the way Gatekeeper will. It refuses early, naming what to do, if the
-credentials are missing or the bundle is ad-hoc signed.
-
 ## Keeping several versions
 
 Off by default. With it off, Turnstile uses exactly the same layout as OpenLauncher, so
