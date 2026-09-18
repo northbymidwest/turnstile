@@ -15,14 +15,14 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 time = { version = "0.3", features = ["parsing", "formatting", "macros"] }
 ureq = { version = "3", default-features = false, features = ["rustls"] }
-# Our fork, pinned by commit. The upstream crate cannot open any of the GOG
-# installers this reads: it panics on their setup header, has no way to reach
-# the .bin slices two of the three games keep their data in, and reports the
-# parts of a file rather than the file. Pull requests are open upstream; until
-# they land this is the only build that works.
 inno = { git = "https://github.com/northbymidwest/inno", rev = "53d9a952f607a847bd78395a052eaa58bd4e3768", default-features = false, features = ["extract"] }
 objc2 = "0.6"
 objc2-foundation = "0.3"
 objc2-app-kit = "0.3"
 dispatch2 = "0.3"
 block2 = "0.6"
+
+[profile.release]
+strip = "symbols"
+lto = "fat"
+codegen-units = 1
