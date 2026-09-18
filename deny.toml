@@ -36,7 +36,19 @@ multiple-versions = "deny"
 wildcards = "deny"
 # turnstile depends on turnstile-core by path, with no version.
 allow-wildcard-paths = true
+# `syn` twice, and only `syn`. It is a proc-macro dependency, so neither copy
+# reaches the binary: this costs build time and nothing else. The second copy
+# arrives through zerocopy-derive, which is still on syn 2 while serde and
+# thiserror have moved to syn 3, and goes away when zerocopy follows. Kept
+# narrow deliberately, so a real duplicate in shipped code still fails.
+skip = [{ crate = "syn@2", reason = "zerocopy-derive has not moved to syn 3" }]
 
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+# Our fork of `inno`, pinned by commit in the workspace manifest. The published
+# crate cannot open any of the GOG installers Turnstile reads, so there is no
+# registry version to depend on instead; the fixes are open upstream as pull
+# requests. When they are released this becomes an ordinary crates.io
+# dependency and this entry goes.
+allow-git = ["https://github.com/northbymidwest/inno"]
