@@ -15,8 +15,7 @@ not affiliated with the OpenRCT2 project.
 
 Download the latest `.dmg` from the
 [releases page](https://github.com/northbymidwest/turnstile/releases/latest), open it,
-and drag Turnstile to Applications. Release builds are universal, signed with a
-Developer ID certificate and notarized, so they open without a Gatekeeper warning.
+and drag Turnstile to Applications.
 
 Or build it yourself:
 
