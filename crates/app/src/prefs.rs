@@ -18,6 +18,7 @@ pub const KEY_SHOW_DEVELOP: &str = "showDevelopmentVersions";
 pub const KEY_CHECK_FOR_UPDATES: &str = "checkForUpdates";
 pub const KEY_MULTI_VERSION: &str = "keepMultipleVersions";
 pub const KEY_SELECTED_GAME: &str = "selectedGame";
+pub const KEY_INSTALL_ROOT: &str = "gameDataDirectory";
 
 /// `game_key` is always `GameId::key()`, never a display string: the key is
 /// derived from the enum at every call site, not assembled from a name and
@@ -87,6 +88,10 @@ impl Prefs {
         self.defaults
             .stringForKey(&NSString::from_str(key))
             .map(|s| s.to_string())
+    }
+
+    pub fn remove(&self, key: &str) {
+        self.defaults.removeObjectForKey(&NSString::from_str(key));
     }
 
     pub fn set_string(&self, key: &str, value: &str) {
@@ -168,6 +173,15 @@ impl Prefs {
             .unwrap_or(GameId::ALL[0])
     }
 
+    /// Where game data is unpacked, or `None` for the default. Absent and
+    /// empty both mean the default: an empty string is what a preference
+    /// edited by hand tends to end up as, and it is not a usable path.
+    pub fn install_root(&self) -> Option<std::path::PathBuf> {
+        self.get_string(KEY_INSTALL_ROOT)
+            .filter(|path| !path.trim().is_empty())
+            .map(std::path::PathBuf::from)
+    }
+
     pub fn save(&self, pref: Pref, game: GameId) {
         match pref {
             Pref::CheckForUpdates(v) => self.set_bool(KEY_CHECK_FOR_UPDATES, v),
@@ -175,6 +189,10 @@ impl Prefs {
             Pref::MultiVersion(v) => self.set_bool(KEY_MULTI_VERSION, v),
             Pref::SelectedGame(v) => self.set_string(KEY_SELECTED_GAME, v.key()),
             Pref::AutoUpdate(v) => self.set_bool(&auto_update_key(game.key()), v),
+            Pref::InstallRoot(Some(path)) => self.set_string(KEY_INSTALL_ROOT, &path),
+            // Removed rather than stored empty, so the default is the absence
+            // of an answer and not a second spelling of one.
+            Pref::InstallRoot(None) => self.remove(KEY_INSTALL_ROOT),
         }
     }
 }

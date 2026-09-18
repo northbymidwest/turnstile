@@ -34,6 +34,7 @@ use objc2_foundation::{NSIndexSet, NSInteger, NSNotification, NSObjectProtocol};
 use crate::mainqueue;
 use crate::state::Msg;
 use crate::views::sidebar;
+use turnstile_core::gamedata::OriginalGame;
 
 /// Almost a pure event-to-message translator. The one field is the flag
 /// that tells `tableViewSelectionDidChange:` a selection came from
@@ -195,6 +196,27 @@ define_class!(
                 self.send(Msg::ToggleMultiVersion(on));
             }
         }
+
+        /// One selector for three buttons, told apart by the sender's tag.
+        /// The tag is the game's position in `OriginalGame::ALL`, set where
+        /// the button is built from the same list, so the two cannot drift
+        /// the way a hand-written number would.
+        #[unsafe(method(installGameDataClicked:))]
+        fn install_game_data_clicked(&self, sender: Option<&NSButton>) {
+            if let Some(game) = sender.and_then(game_for_tag) {
+                self.send(Msg::ChooseInstaller(game));
+            }
+        }
+
+        #[unsafe(method(chooseInstallRootClicked:))]
+        fn choose_install_root_clicked(&self, _sender: Option<&NSObject>) {
+            self.send(Msg::ChooseInstallRoot);
+        }
+
+        #[unsafe(method(useDefaultInstallRootClicked:))]
+        fn use_default_install_root_clicked(&self, _sender: Option<&NSObject>) {
+            self.send(Msg::InstallRootChosen(None));
+        }
     }
 );
 
@@ -257,4 +279,14 @@ pub fn install(mtm: MainThreadMarker, table: &NSTableView) -> Retained<Actions> 
         table.setDelegate(Some(ProtocolObject::from_ref(&*actions)));
     }
     actions
+}
+
+/// The game a tagged button stands for.
+///
+/// Out of range means a button somebody tagged by hand rather than from
+/// `OriginalGame::ALL`, and doing nothing is better than acting on whichever
+/// game happens to sit at index zero.
+fn game_for_tag(sender: &NSButton) -> Option<OriginalGame> {
+    let tag = usize::try_from(sender.tag()).ok()?;
+    OriginalGame::ALL.get(tag).copied()
 }

@@ -19,6 +19,7 @@ use std::path::PathBuf;
 use turnstile_core::age::Age;
 use turnstile_core::download::Status;
 use turnstile_core::game::GameId;
+use turnstile_core::gamedata::OriginalGame;
 use turnstile_core::release::Channel;
 use turnstile_core::store::{DisableReport, Installed};
 
@@ -82,9 +83,14 @@ pub struct Alert {
     pub title_arg: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Pref {
     CheckForUpdates(bool),
+    /// Where the original games' data is unpacked. `None` is the default
+    /// root, which is why this is not simply a path: "the default" has to
+    /// survive a restart as a distinct answer from a path that happens to
+    /// equal today's default.
+    InstallRoot(Option<String>),
     ShowDevelop(bool),
     AutoUpdate(bool),
     MultiVersion(bool),
@@ -121,6 +127,15 @@ pub struct UiState {
     pub show_develop: bool,
     /// Whether to ask GitHub for a newer Turnstile at startup.
     pub check_for_updates: bool,
+    /// Where each original game's data was found, one slot per
+    /// `OriginalGame`. `None` means it is not installed, which is a state the
+    /// interface has to show rather than hide: OpenRCT2 without RollerCoaster
+    /// Tycoon 2's data starts and then fails.
+    game_data: [Option<PathBuf>; 3],
+    /// The chosen root for unpacking game data, or `None` for the default.
+    /// Held for the Settings window to show; the controller reads the same
+    /// preference when it needs the actual destination.
+    pub install_root: Option<PathBuf>,
     /// The newer release, once one has been found and not yet dismissed.
     /// `None` covers both "up to date" and "the check has not answered",
     /// which the interface does not need to tell apart: neither shows a
@@ -201,7 +216,24 @@ impl UiState {
             error: None,
             generation: 0,
             pending_removal: None,
+            game_data: [None, None, None],
+            install_root: None,
         }
+    }
+
+    /// Where this game's data is, if it is installed at all.
+    #[must_use]
+    pub fn game_data(&self, game: OriginalGame) -> Option<&std::path::Path> {
+        self.game_data[Self::data_slot(game)].as_deref()
+    }
+
+    /// `OriginalGame` has no index of its own, and giving it one would put a
+    /// second ordering next to `ALL`'s that could drift from it.
+    fn data_slot(game: OriginalGame) -> usize {
+        OriginalGame::ALL
+            .iter()
+            .position(|candidate| *candidate == game)
+            .unwrap_or(0)
     }
 
     pub fn is_busy(&self) -> bool {
@@ -345,6 +377,26 @@ pub enum Msg {
     LaunchFinished {
         result: Result<(), String>,
     },
+    /// Where each original game's data is, as found on disk. Sent at
+    /// startup and again after an install.
+    GameDataScanned(Vec<(OriginalGame, Option<PathBuf>)>),
+    /// The user asked to install one game's data; the file picker follows.
+    ChooseInstaller(OriginalGame),
+    /// The picker came back with a file. `None` is a cancelled picker, which
+    /// is not a failure and produces nothing.
+    InstallerChosen {
+        game: OriginalGame,
+        installer: Option<PathBuf>,
+    },
+    GameDataInstalled {
+        generation: u64,
+        game: OriginalGame,
+        result: Result<PathBuf, String>,
+    },
+    /// The user asked to change where game data is unpacked.
+    ChooseInstallRoot,
+    /// A new root, or `None` to go back to the default.
+    InstallRootChosen(Option<PathBuf>),
     /// `VersionStore::reconcile` failed for at least one game at launch.
     /// Posted once, after the first `SelectGame`, by `controller::start`:
     /// the repair runs before any generation exists, so it cannot report
@@ -374,6 +426,22 @@ pub enum Effect {
     LoadInstalled {
         generation: u64,
         game: GameId,
+    },
+    /// Look on disk for each original game's data.
+    ScanGameData,
+    /// Ask for an installer to read. The reply is `Msg::InstallerChosen`,
+    /// including when the picker is cancelled.
+    PickInstaller(OriginalGame),
+    /// Ask for a directory to unpack game data into.
+    PickInstallRoot,
+    /// Unpack `installer` and point the game at the result. The destination
+    /// is resolved where the effect is performed, from the same preference
+    /// the Settings window shows, rather than carried here: the reducer has
+    /// no filesystem and the default root is not a fact it holds.
+    InstallGameData {
+        generation: u64,
+        game: OriginalGame,
+        installer: PathBuf,
     },
     FetchReleases {
         generation: u64,
@@ -941,6 +1009,72 @@ pub fn reduce(state: &mut UiState, msg: Msg) -> Vec<Effect> {
         // to `LaunchFinished` alone, and `LaunchFinished`'s `Ok` arm clears
         // every error in it, so borrowing it here would let a successful
         // launch dismiss an unrelated repair failure the user had not read.
+        Msg::GameDataScanned(found) => {
+            for (game, path) in found {
+                state.game_data[UiState::data_slot(game)] = path;
+            }
+            Vec::new()
+        }
+
+        Msg::ChooseInstaller(game) => vec![Effect::PickInstaller(game)],
+
+        Msg::InstallerChosen { game, installer } => {
+            // A cancelled picker is the ordinary way out of one, not a
+            // failure worth a message or a spinner.
+            let Some(installer) = installer else {
+                return Vec::new();
+            };
+
+            begin(state, 1);
+            vec![Effect::InstallGameData {
+                generation: state.generation,
+                game,
+                installer,
+            }]
+        }
+
+        Msg::GameDataInstalled {
+            generation,
+            game,
+            result,
+        } => {
+            if generation != state.generation {
+                return Vec::new();
+            }
+            end(state);
+
+            match result {
+                Ok(path) => {
+                    state.game_data[UiState::data_slot(game)] = Some(path);
+                    Vec::new()
+                }
+                Err(message) => {
+                    state.error = Some(Alert {
+                        title: "FailedToInstallGameData".into(),
+                        message,
+                        message_is_key: false,
+                        generation: Some(state.generation),
+                        title_arg: None,
+                    });
+                    Vec::new()
+                }
+            }
+        }
+
+        Msg::ChooseInstallRoot => vec![Effect::PickInstallRoot],
+
+        Msg::InstallRootChosen(root) => {
+            state.install_root = root.clone();
+            vec![
+                Effect::SavePref(Pref::InstallRoot(
+                    root.map(|path| path.to_string_lossy().into_owned()),
+                )),
+                // Where the data is depends on where it is unpacked, so the
+                // answer on screen is stale the moment this changes.
+                Effect::ScanGameData,
+            ]
+        }
+
         Msg::StartupRepairFailed { message } => {
             state.error = Some(Alert {
                 title: "FailedToRepairInstallation".into(),
@@ -1300,6 +1434,193 @@ mod tests {
         // this exists for, and they are exactly the person who will not go
         // looking for the setting.
         assert!(UiState::new(GameId::OpenRCT2).check_for_updates);
+    }
+
+    #[test]
+    fn a_cancelled_picker_does_nothing_at_all() {
+        // Cancelling is how most people leave a file panel. Treating it as a
+        // failure would put a spinner up, or an alert, over nothing.
+        let mut s = UiState::new(GameId::OpenRCT2);
+        let effects = reduce(
+            &mut s,
+            Msg::InstallerChosen {
+                game: OriginalGame::RollerCoasterTycoon2,
+                installer: None,
+            },
+        );
+        assert!(effects.is_empty());
+        assert!(!s.is_busy(), "a cancelled picker must not leave it busy");
+    }
+
+    #[test]
+    fn choosing_an_installer_goes_busy_and_asks_for_the_install() {
+        let mut s = UiState::new(GameId::OpenRCT2);
+        let effects = reduce(
+            &mut s,
+            Msg::InstallerChosen {
+                game: OriginalGame::Locomotion,
+                installer: Some("/tmp/setup.exe".into()),
+            },
+        );
+
+        assert!(s.is_busy());
+        assert!(effects.iter().any(|e| matches!(
+            e,
+            Effect::InstallGameData {
+                game: OriginalGame::Locomotion,
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn an_installed_game_records_where_it_landed() {
+        let mut s = UiState::new(GameId::OpenRCT2);
+        reduce(
+            &mut s,
+            Msg::InstallerChosen {
+                game: OriginalGame::RollerCoasterTycoon2,
+                installer: Some("/tmp/setup.exe".into()),
+            },
+        );
+
+        let generation = s.generation;
+        reduce(
+            &mut s,
+            Msg::GameDataInstalled {
+                generation,
+                game: OriginalGame::RollerCoasterTycoon2,
+                result: Ok("/games/rct2".into()),
+            },
+        );
+
+        assert_eq!(
+            s.game_data(OriginalGame::RollerCoasterTycoon2),
+            Some(std::path::Path::new("/games/rct2"))
+        );
+        assert!(!s.is_busy());
+        assert!(s.error.is_none());
+    }
+
+    #[test]
+    fn one_game_finishing_does_not_touch_another() {
+        // Three games share one screen and one busy flag. A reply that wrote
+        // the wrong slot would show somebody Locomotion installed where they
+        // installed RollerCoaster Tycoon.
+        let mut s = UiState::new(GameId::OpenRCT2);
+        reduce(
+            &mut s,
+            Msg::GameDataScanned(vec![
+                (OriginalGame::RollerCoasterTycoon1, Some("/a".into())),
+                (OriginalGame::RollerCoasterTycoon2, None),
+                (OriginalGame::Locomotion, Some("/c".into())),
+            ]),
+        );
+
+        assert_eq!(
+            s.game_data(OriginalGame::RollerCoasterTycoon1),
+            Some(std::path::Path::new("/a"))
+        );
+        assert_eq!(s.game_data(OriginalGame::RollerCoasterTycoon2), None);
+        assert_eq!(
+            s.game_data(OriginalGame::Locomotion),
+            Some(std::path::Path::new("/c"))
+        );
+    }
+
+    #[test]
+    fn a_game_data_reply_from_a_stale_generation_is_discarded() {
+        let mut s = UiState::new(GameId::OpenRCT2);
+        reduce(
+            &mut s,
+            Msg::InstallerChosen {
+                game: OriginalGame::Locomotion,
+                installer: Some("/tmp/setup.exe".into()),
+            },
+        );
+        let stale = s.generation;
+        reduce(&mut s, Msg::SelectGame(GameId::OpenLoco));
+
+        reduce(
+            &mut s,
+            Msg::GameDataInstalled {
+                generation: stale,
+                game: OriginalGame::Locomotion,
+                result: Ok("/games/locomotion".into()),
+            },
+        );
+
+        assert_eq!(s.game_data(OriginalGame::Locomotion), None);
+    }
+
+    #[test]
+    fn a_failed_install_reports_it_and_leaves_the_path_alone() {
+        let mut s = UiState::new(GameId::OpenRCT2);
+        reduce(
+            &mut s,
+            Msg::GameDataScanned(vec![(
+                OriginalGame::RollerCoasterTycoon2,
+                Some("/old/rct2".into()),
+            )]),
+        );
+        reduce(
+            &mut s,
+            Msg::InstallerChosen {
+                game: OriginalGame::RollerCoasterTycoon2,
+                installer: Some("/tmp/setup.exe".into()),
+            },
+        );
+
+        let generation = s.generation;
+        reduce(
+            &mut s,
+            Msg::GameDataInstalled {
+                generation,
+                game: OriginalGame::RollerCoasterTycoon2,
+                result: Err("the installer did not contain Data/g1.dat".into()),
+            },
+        );
+
+        assert!(s.error.is_some());
+        assert!(!s.is_busy());
+        assert_eq!(
+            s.game_data(OriginalGame::RollerCoasterTycoon2),
+            Some(std::path::Path::new("/old/rct2")),
+            "a failed install must not forget the install that is still there"
+        );
+    }
+
+    #[test]
+    fn changing_the_install_directory_saves_it_and_looks_again() {
+        // Where the data is depends on where it is unpacked, so what is on
+        // screen is stale the moment this changes.
+        let mut s = UiState::new(GameId::OpenRCT2);
+        let effects = reduce(&mut s, Msg::InstallRootChosen(Some("/elsewhere".into())));
+
+        assert_eq!(
+            s.install_root.as_deref(),
+            Some(std::path::Path::new("/elsewhere"))
+        );
+        assert!(effects.iter().any(|e| matches!(
+            e,
+            Effect::SavePref(Pref::InstallRoot(Some(path))) if path == "/elsewhere"
+        )));
+        assert!(effects.iter().any(|e| matches!(e, Effect::ScanGameData)));
+    }
+
+    #[test]
+    fn going_back_to_the_default_saves_the_absence_of_a_path() {
+        // Saved as an empty string it would be a path, and an unusable one.
+        let mut s = UiState::new(GameId::OpenRCT2);
+        reduce(&mut s, Msg::InstallRootChosen(Some("/elsewhere".into())));
+        let effects = reduce(&mut s, Msg::InstallRootChosen(None));
+
+        assert!(s.install_root.is_none());
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::SavePref(Pref::InstallRoot(None))))
+        );
     }
 
     fn rows(tags: &[&str]) -> Vec<ReleaseRow> {

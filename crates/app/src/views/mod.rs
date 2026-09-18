@@ -3,6 +3,7 @@
 //! reads `UiState` and pushes it into these controls.
 
 mod detail;
+pub mod picker;
 pub mod settings;
 pub(crate) mod sidebar;
 pub mod updatebanner;
@@ -44,6 +45,7 @@ pub struct Views {
     pub download_button: Retained<NSButton>,
     pub progress: Retained<NSProgressIndicator>,
     pub develop_check: Retained<NSButton>,
+    pub game_data: Vec<detail::GameDataRow>,
     pub auto_update_check: Retained<NSButton>,
     pub settings: settings::Settings,
     pub title_label: Retained<NSTextField>,
@@ -96,6 +98,7 @@ pub fn build(mtm: MainThreadMarker) -> Views {
         download_button: detail.download_button,
         progress: detail.progress,
         develop_check: detail.develop_check,
+        game_data: detail.game_data,
         auto_update_check: detail.auto_update_check,
         title_label: detail.title_label,
         version_label: detail.version_label,
@@ -245,6 +248,54 @@ pub fn apply(state: &UiState, views: &Views) {
         true,
     );
 
+    // Game data. Which rows are relevant follows the selected game, not the
+    // list of original games: RollerCoaster Tycoon 1 and 2 are both read by
+    // OpenRCT2, and showing Locomotion's row beside them would offer somebody
+    // an install that the game in front of them cannot use.
+    for row in &views.game_data {
+        let relevant = row.game.configured_in() == state.selected_game;
+        row.container.setHidden(!relevant);
+        if !relevant {
+            continue;
+        }
+
+        let installed = state.game_data(row.game);
+
+        row.path
+            .setStringValue(&NSString::from_str(&match installed {
+                Some(path) => path.to_string_lossy().into_owned(),
+                // An optional one says so, because "not installed" next to a
+                // game that will not start without it means something different
+                // from the same words next to extra content.
+                None if optional(row.game) => format!(
+                    "{} ({})",
+                    strings::get("GameDataNotInstalled"),
+                    strings::get("GameDataOptional")
+                ),
+                None => strings::get("GameDataNotInstalled"),
+            }));
+
+        row.button
+            .setTitle(&NSString::from_str(&strings::get(if installed.is_some() {
+                // Not "Change": this asks for an installer and unpacks it
+                // again. Where the data goes is a setting, not a per-game
+                // choice, and the path shown is read from the game's own
+                // configuration.
+                "ReinstallGameData"
+            } else {
+                "InstallGameData"
+            })));
+        row.button.setEnabled(!state.is_busy());
+    }
+
+    views
+        .settings
+        .install_root_label
+        .setStringValue(&NSString::from_str(&match &state.install_root {
+            Some(path) => path.to_string_lossy().into_owned(),
+            None => strings::get("DefaultDirectory"),
+        }));
+
     // The banner, which is hidden whenever there is nothing to say: no update
     // found, one dismissed, or the check turned off.
     match &state.update {
@@ -288,4 +339,15 @@ fn set_check(button: &NSButton, checked: bool, enabled: bool) {
         NSControlStateValueOff
     });
     button.setEnabled(enabled);
+}
+
+/// Whether a game's data is extra content rather than something the
+/// reimplementation cannot start without. Only RollerCoaster Tycoon 1 is:
+/// OpenRCT2 runs without it and gains its scenarios and objects when it is
+/// there.
+const fn optional(game: turnstile_core::gamedata::OriginalGame) -> bool {
+    matches!(
+        game,
+        turnstile_core::gamedata::OriginalGame::RollerCoasterTycoon1
+    )
 }

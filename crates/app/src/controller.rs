@@ -23,6 +23,7 @@
 //! comment for how the two compose with the generation gate.
 
 use std::cell::RefCell;
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -36,6 +37,8 @@ use turnstile_core::asset::HostArch;
 use turnstile_core::dirs::Dirs;
 use turnstile_core::download::{Progress, Status};
 use turnstile_core::game::GameId;
+use turnstile_core::gameconfig;
+use turnstile_core::gamedata::{self, OriginalGame};
 use turnstile_core::github::GitHub;
 use turnstile_core::install;
 use turnstile_core::release::Release;
@@ -120,6 +123,28 @@ impl ProgressThrottle {
         self.last = Some((now, p.status));
         true
     }
+}
+
+/// Where a game's data is, if it is where the game's own configuration says
+/// it is and something is actually there.
+///
+/// The configuration is the authority rather than the preference: somebody
+/// may have pointed the game somewhere by hand, or years ago, and that is
+/// still where the data is.
+fn installed_game_data(game: OriginalGame) -> Option<PathBuf> {
+    let dirs = Dirs::system()?;
+    let configured = gameconfig::configured_path(game, &dirs).ok().flatten()?;
+    gamedata::installed_at(game, &configured).then_some(configured)
+}
+
+/// `~/Library/Application Support/Turnstile/games`, and the current
+/// directory in the impossible case of no home, which keeps this total
+/// rather than making every caller handle a case that cannot happen.
+fn default_install_root() -> PathBuf {
+    Dirs::system().map_or_else(
+        || PathBuf::from("."),
+        |dirs| dirs.app_support.join("Turnstile/games"),
+    )
 }
 
 fn store_for(game: GameId) -> Option<VersionStore> {
@@ -214,6 +239,11 @@ pub fn start(mtm: MainThreadMarker) {
 
     controller.handle(Msg::SelectGame(selected));
 
+    // Straight into state rather than through a message: this is the stored
+    // value being loaded, not somebody changing it, and `InstallRootChosen`
+    // would save it back and rescan for no reason.
+    controller.state.borrow_mut().install_root = controller.prefs.install_root();
+
     // After the first `SelectGame`, not before it: that message bumps the
     // generation, and an error raised ahead of it would be cleared as stale
     // by the very bump that starts the app up. Non-modal on purpose -- this
@@ -227,6 +257,11 @@ pub fn start(mtm: MainThreadMarker) {
             message: repair_failures.join("\n"),
         });
     }
+
+    // Where the original games' data is, which the detail pane shows for
+    // every game rather than only the selected one, so it is looked for once
+    // at startup rather than on each switch.
+    controller.perform(Effect::ScanGameData);
 
     // Last, and only if wanted. After the first `SelectGame` for the same
     // reason the repair banner is: that message bumps the generation. This
@@ -248,6 +283,18 @@ pub fn start(mtm: MainThreadMarker) {
 impl Controller {
     fn mode(&self) -> Mode {
         mode_for(self.state.borrow().multi_version)
+    }
+
+    /// Where game data is unpacked: whatever Settings says, or the default
+    /// beneath Turnstile's own directory.
+    ///
+    /// Read from the preference rather than from `UiState`, because this runs
+    /// where the effect is performed and a borrow of the state is not held
+    /// there. They cannot disagree: the same message writes both.
+    fn install_root(&self) -> PathBuf {
+        self.prefs
+            .install_root()
+            .unwrap_or_else(default_install_root)
     }
 
     /// Reduce, render, then perform. In this order, so the UI reflects the
@@ -303,6 +350,77 @@ impl Controller {
                         .latest_turnstile(UPDATE_OWNER, UPDATE_REPO, env!("CARGO_PKG_VERSION"))
                         .unwrap_or(None);
                     Msg::UpdateChecked(found)
+                });
+            }
+
+            // Reads three directories and nothing else, so it is off the
+            // store lock: it cannot corrupt an install and an install cannot
+            // corrupt it.
+            Effect::ScanGameData => {
+                mainqueue::spawn(move || {
+                    let found = OriginalGame::ALL
+                        .into_iter()
+                        .map(|game| (game, installed_game_data(game)))
+                        .collect();
+                    Msg::GameDataScanned(found)
+                });
+            }
+
+            Effect::PickInstaller(game) => {
+                let chosen = views::picker::choose_installer(self.mtm);
+                self.handle(Msg::InstallerChosen {
+                    game,
+                    installer: chosen,
+                });
+            }
+
+            Effect::PickInstallRoot => {
+                let chosen = views::picker::choose_directory(self.mtm);
+                if let Some(root) = chosen {
+                    self.handle(Msg::InstallRootChosen(Some(root)));
+                }
+            }
+
+            Effect::InstallGameData {
+                generation,
+                game,
+                installer,
+            } => {
+                let root = self.install_root();
+                storelock::spawn(move || {
+                    let result = (|| {
+                        let dirs = Dirs::system().ok_or_else(|| err("no home directory"))?;
+                        let destination = root.join(game.directory());
+
+                        gamedata::install_game_data(
+                            &installer,
+                            game,
+                            &destination,
+                            &mut |progress| {
+                                mainqueue::post(Msg::Progress {
+                                    generation,
+                                    status: progress.status,
+                                    value: progress.value,
+                                });
+                            },
+                            &AtomicBool::new(false),
+                        )
+                        .map_err(|e| e.to_string())?;
+
+                        // Extracting without telling the game leaves somebody
+                        // with the data installed and the game still saying it
+                        // cannot find it.
+                        gameconfig::point_at(game, &dirs, &destination)
+                            .map_err(|e| e.to_string())?;
+
+                        Ok(destination)
+                    })();
+
+                    Msg::GameDataInstalled {
+                        generation,
+                        game,
+                        result,
+                    }
                 });
             }
 

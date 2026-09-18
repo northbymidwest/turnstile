@@ -9,11 +9,13 @@ use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::{MainThreadMarker, sel};
 use objc2_app_kit::{
-    NSButton, NSColor, NSFont, NSFontWeightSemibold, NSLayoutConstraintOrientation,
-    NSLayoutPriorityDefaultLow, NSPopUpButton, NSProgressIndicator, NSProgressIndicatorStyle,
-    NSStackView, NSTextField, NSUserInterfaceLayoutOrientation, NSView, NSViewController,
+    NSButton, NSColor, NSFont, NSFontWeightSemibold, NSLayoutAttribute,
+    NSLayoutConstraintOrientation, NSLayoutPriorityDefaultLow, NSLineBreakMode, NSPopUpButton,
+    NSProgressIndicator, NSProgressIndicatorStyle, NSStackView, NSTextField,
+    NSUserInterfaceLayoutOrientation, NSView, NSViewController,
 };
-use objc2_foundation::{NSEdgeInsets, NSString, ns_string};
+use objc2_foundation::{NSEdgeInsets, NSInteger, NSString, ns_string};
+use turnstile_core::gamedata::OriginalGame;
 
 use crate::actions::Actions;
 use crate::strings;
@@ -32,6 +34,22 @@ pub struct Detail {
     pub auto_update_check: Retained<NSButton>,
     pub title_label: Retained<NSTextField>,
     pub version_label: Retained<NSTextField>,
+    /// One row per original game, in `OriginalGame::ALL` order. All three are
+    /// built once and hidden or shown, because which are relevant depends on
+    /// the selected game and rebuilding a row is how a button loses its
+    /// target.
+    pub game_data: Vec<GameDataRow>,
+}
+
+/// The state of one original game's data, and the button that changes it.
+pub struct GameDataRow {
+    pub game: OriginalGame,
+    /// Hidden when the row is about a game other than the selected one. The
+    /// title is not kept: it names a game and never changes, and the stack
+    /// view holds it.
+    pub container: Retained<NSStackView>,
+    pub path: Retained<NSTextField>,
+    pub button: Retained<NSButton>,
 }
 
 /// Builds the detail pane: a vertical `NSStackView` of horizontal rows, each
@@ -191,6 +209,51 @@ pub fn build(mtm: MainThreadMarker, actions: &Actions) -> (Retained<NSViewContro
     };
     root.addArrangedSubview(&auto_update_check);
 
+    root.addArrangedSubview(&label(mtm, &strings::get("GameData")));
+
+    let game_data: Vec<GameDataRow> = OriginalGame::ALL
+        .into_iter()
+        .enumerate()
+        .map(|(index, game)| {
+            let title = label(mtm, title_of(game));
+            let path = small_secondary_label(mtm, "");
+            path.setLineBreakMode(NSLineBreakMode::ByTruncatingMiddle);
+
+            // SAFETY: `target` outlives the button, and
+            // `installGameDataClicked:` is a real selector `Actions` defines.
+            let button = unsafe {
+                NSButton::buttonWithTitle_target_action(
+                    &NSString::from_str(&strings::get("InstallGameData")),
+                    Some(target),
+                    Some(sel!(installGameDataClicked:)),
+                    mtm,
+                )
+            };
+            // Which game the button means, taken from the same list it was
+            // built from rather than written out again.
+            button.setTag(NSInteger::try_from(index).unwrap_or(0));
+
+            let text = NSStackView::new(mtm);
+            text.setOrientation(NSUserInterfaceLayoutOrientation::Vertical);
+            text.setSpacing(0.0);
+            text.setAlignment(NSLayoutAttribute::Leading);
+            text.addArrangedSubview(&title);
+            text.addArrangedSubview(&path);
+
+            let container = row(mtm);
+            container.addArrangedSubview(&text);
+            container.addArrangedSubview(&button);
+            root.addArrangedSubview(&container);
+
+            GameDataRow {
+                game,
+                container,
+                path,
+                button,
+            }
+        })
+        .collect();
+
     let controller = NSViewController::new(mtm);
     controller.setView(&root);
 
@@ -207,6 +270,7 @@ pub fn build(mtm: MainThreadMarker, actions: &Actions) -> (Retained<NSViewContro
             auto_update_check,
             title_label,
             version_label,
+            game_data,
         },
     )
 }
@@ -220,7 +284,7 @@ fn row(mtm: MainThreadMarker) -> Retained<NSStackView> {
     stack
 }
 
-fn label(mtm: MainThreadMarker, text: &str) -> Retained<NSTextField> {
+pub fn label(mtm: MainThreadMarker, text: &str) -> Retained<NSTextField> {
     NSTextField::labelWithString(&NSString::from_str(text), mtm)
 }
 
@@ -238,4 +302,15 @@ pub(crate) fn small_secondary_label(mtm: MainThreadMarker, text: &str) -> Retain
     )));
     secondary(&field);
     field
+}
+
+/// The name of an original game, which is a product name and so the same in
+/// every language. Nothing here goes through the string table, because a
+/// translation of "RollerCoaster Tycoon 2" would be a mistranslation.
+const fn title_of(game: OriginalGame) -> &'static str {
+    match game {
+        OriginalGame::RollerCoasterTycoon1 => "RollerCoaster Tycoon",
+        OriginalGame::RollerCoasterTycoon2 => "RollerCoaster Tycoon 2",
+        OriginalGame::Locomotion => "Chris Sawyer's Locomotion",
+    }
 }
