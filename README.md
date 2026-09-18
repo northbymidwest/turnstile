@@ -52,10 +52,18 @@ Off by default. With it off, Turnstile uses exactly the same layout as OpenLaunc
 the two can be used interchangeably and a game installed by either is visible to the
 other.
 
-Tick "Keep multiple versions installed" and builds move to `versions/` with `bin` as a
-symlink to the active one, so you can switch between builds instantly. Turning it off
-again collapses back to a single install and leaves the others on disk rather than
-deleting them.
+Tick "Keep multiple versions installed", in Settings (Command-comma), and builds move
+to `versions/` with `bin` as a symlink to the active one, so you can switch between
+builds instantly. Turning it off again collapses back to a single install and leaves the
+others on disk rather than deleting them.
+
+## Updating Turnstile
+
+On launch Turnstile asks GitHub whether a newer Turnstile has been released and, if so,
+shows a banner offering to open the releases page. Nothing is downloaded or installed:
+updating means replacing the app with the new `.dmg`, as it does for anything shipped
+outside the App Store. Prereleases are ignored, a failed check is silent, and the whole
+thing can be turned off in Settings.
 
 ## Building
 

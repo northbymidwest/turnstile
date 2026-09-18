@@ -86,7 +86,7 @@ impl UpdateBanner {
     pub fn show(&self, version: &str) {
         self.message
             .setStringValue(&NSString::from_str(&strings::format1(
-                "LauncherUpdateMessage",
+                "UpdateAvailable",
                 version,
             )));
         self.view.setHidden(false);

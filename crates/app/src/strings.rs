@@ -321,6 +321,69 @@ mod tests {
         );
     }
 
+    /// Every key any module asks for, read out of this crate's own source.
+    /// The scan matches `strings::get("...")` and its `format*` siblings,
+    /// which is how every caller outside this module spells it; the
+    /// unqualified `get("...")` calls in these tests, some of which pass
+    /// deliberately unknown keys, are invisible to it for the same reason.
+    fn keys_used_in_source(dir: &std::path::Path) -> Vec<(String, String)> {
+        let mut found = Vec::new();
+        for entry in std::fs::read_dir(dir)
+            .unwrap_or_else(|e| panic!("failed to read {}: {e}", dir.display()))
+        {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                found.extend(keys_used_in_source(&path));
+                continue;
+            }
+            if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+                continue;
+            }
+            // This file writes the patterns it searches for, so scanning it
+            // would find its own doc comments rather than any real call.
+            if path.file_name().and_then(|f| f.to_str()) == Some("strings.rs") {
+                continue;
+            }
+            let content = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
+            for call in ["strings::get(", "strings::format1(", "strings::format2("] {
+                for (offset, _) in content.match_indices(call) {
+                    // rustfmt breaks a long call after the paren, so the key
+                    // is not always the next character.
+                    let rest = content[offset + call.len()..].trim_start();
+                    let Some(rest) = rest.strip_prefix('"') else {
+                        continue;
+                    };
+                    if let Some(end) = rest.find('"') {
+                        found.push((rest[..end].to_string(), path.display().to_string()));
+                    }
+                }
+            }
+        }
+        found
+    }
+
+    #[test]
+    fn every_key_the_source_asks_for_is_one_we_ship() {
+        // A key nobody translated does not fail, crash, or render empty: it
+        // renders as itself, so `LauncherUpdateMessage` sits in the window
+        // looking like a variable name. That is invisible to every other
+        // test here, which check the tables against each other and never
+        // against the calls, so this one reads the calls.
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let used = keys_used_in_source(&src);
+        assert!(
+            used.len() > 20,
+            "the scan found almost nothing, so it is broken"
+        );
+        for (key, file) in used {
+            assert!(
+                REQUIRED_KEYS.contains(&key.as_str()),
+                "{file} asks for {key}, which is not in REQUIRED_KEYS"
+            );
+        }
+    }
+
     #[test]
     fn placeholders_are_substituted_positionally() {
         assert_eq!(substitute("{0} and {1}", &["a", "b"]), "a and b");
