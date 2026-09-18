@@ -169,6 +169,8 @@ pub fn build(mtm: MainThreadMarker, actions: &Actions) -> (Retained<NSViewContro
     progress.setHidden(true);
     root.addArrangedSubview(&progress);
 
+    // SAFETY: `target` outlives `develop_check`, and `developToggled:` is a
+    // real selector `Actions` defines below.
     let develop_check = unsafe {
         NSButton::checkboxWithTitle_target_action(
             &NSString::from_str(&strings::get("ShowDevelopmentVersions")),
