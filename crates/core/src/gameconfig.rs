@@ -9,7 +9,17 @@
 //! fills in every default it has and rewrites the file itself on first run,
 //! which was checked by giving OpenLoco a one line `openloco.yml` and
 //! watching it grow to a hundred and seventy.
+//!
+//! None of this decodes the file. OpenLoco writes eight raw `0xff` bytes as
+//! the name of the owner face nobody has chosen, so its configuration stops
+//! being valid UTF-8 the moment the game has run once, and reading it as text
+//! fails with "stream did not contain valid UTF-8". Paths on this platform
+//! are bytes too, so a directory whose name is not valid UTF-8 would be
+//! written back mangled. Everything here works on bytes and copies through
+//! every line it is not changing.
 
+use std::ffi::OsString;
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 
 use crate::dirs::Dirs;
@@ -81,17 +91,17 @@ pub fn config_path(game: OriginalGame, dirs: &Dirs) -> PathBuf {
 pub fn point_at(game: OriginalGame, dirs: &Dirs, data: &Path) -> Result<(), CoreError> {
     let setting = game.setting();
     let path = config_path(game, dirs);
-    let value = data.to_string_lossy();
+    let value = data.as_os_str().as_bytes();
 
-    let existing = match std::fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+    let existing = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
         Err(error) => return Err(io(error)),
     };
 
     let updated = match setting.format {
-        Format::Ini { section } => set_ini_key(&existing, section, setting.key, &value),
-        Format::Yaml => set_yaml_key(&existing, setting.key, &value),
+        Format::Ini { section } => set_ini_key(&existing, section, setting.key, value),
+        Format::Yaml => set_yaml_key(&existing, setting.key, value),
     };
 
     if updated == existing {
@@ -110,8 +120,8 @@ pub fn configured_path(game: OriginalGame, dirs: &Dirs) -> Result<Option<PathBuf
     let setting = game.setting();
     let path = config_path(game, dirs);
 
-    let text = match std::fs::read_to_string(&path) {
-        Ok(text) => text,
+    let text = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(io(error)),
     };
@@ -121,7 +131,7 @@ pub fn configured_path(game: OriginalGame, dirs: &Dirs) -> Result<Option<PathBuf
         Format::Yaml => read_yaml_key(&text, setting.key),
     };
 
-    Ok(value.map(PathBuf::from))
+    Ok(value.map(|bytes| PathBuf::from(OsString::from_vec(bytes))))
 }
 
 /// Replaces a file without ever leaving it half written.
@@ -129,7 +139,7 @@ pub fn configured_path(game: OriginalGame, dirs: &Dirs) -> Result<Option<PathBuf
 /// This is somebody's settings. A crash between truncating and writing would
 /// lose the lot, so the new text goes to a neighbouring file and is renamed
 /// over the old one, which is atomic.
-fn write_replacing(path: &Path, text: &str) -> Result<(), CoreError> {
+fn write_replacing(path: &Path, text: &[u8]) -> Result<(), CoreError> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(io)?;
     }
@@ -151,84 +161,136 @@ fn write_replacing(path: &Path, text: &str) -> Result<(), CoreError> {
 
 /// The line ending the file already uses, so an edit does not leave a file
 /// with two kinds.
-fn line_ending(text: &str) -> &'static str {
-    if text.contains("\r\n") { "\r\n" } else { "\n" }
+fn line_ending(text: &[u8]) -> &'static [u8] {
+    if text.windows(2).any(|pair| pair == b"\r\n") {
+        b"\r\n"
+    } else {
+        b"\n"
+    }
 }
 
-/// Sets `key` in `section`, leaving every other line untouched.
-fn set_ini_key(text: &str, section: &str, key: &str, value: &str) -> String {
-    let ending = line_ending(text);
-    let line = format!("{key} = \"{}\"", escape_ini(value));
+/// Splits into lines the way `str::lines` does, without requiring the bytes
+/// to be text: on `\n`, dropping a `\r` before it, and without a trailing
+/// empty line.
+fn lines(text: &[u8]) -> Vec<&[u8]> {
+    if text.is_empty() {
+        return Vec::new();
+    }
 
-    let mut out: Vec<String> = Vec::new();
-    let mut current: Option<String> = None;
+    let mut out: Vec<&[u8]> = text
+        .split(|byte| *byte == b'\n')
+        .map(|line| match line.split_last() {
+            Some((b'\r', rest)) => rest,
+            _ => line,
+        })
+        .collect();
+
+    if out.last().is_some_and(|last| last.is_empty()) {
+        out.pop();
+    }
+
+    out
+}
+
+fn trim(bytes: &[u8]) -> &[u8] {
+    let start = bytes
+        .iter()
+        .position(|byte| !byte.is_ascii_whitespace())
+        .unwrap_or(bytes.len());
+    let end = bytes
+        .iter()
+        .rposition(|byte| !byte.is_ascii_whitespace())
+        .map_or(start, |at| at + 1);
+    &bytes[start..end]
+}
+
+fn join(mut out: Vec<Vec<u8>>, ending: &[u8]) -> Vec<u8> {
+    let mut result = Vec::new();
+    for line in out.drain(..) {
+        result.extend_from_slice(&line);
+        result.extend_from_slice(ending);
+    }
+    result
+}
+
+/// The name in `[name]`, if the line is a section heading.
+fn section_name(trimmed: &[u8]) -> Option<&[u8]> {
+    let rest = trimmed.strip_prefix(b"[")?;
+    let inner = rest.strip_suffix(b"]")?;
+    Some(trim(inner))
+}
+
+/// Sets `key` in `section`, copying every other line through as it was.
+fn set_ini_key(text: &[u8], section: &str, key: &str, value: &[u8]) -> Vec<u8> {
+    let ending = line_ending(text);
+
+    let mut line = Vec::new();
+    line.extend_from_slice(key.as_bytes());
+    line.extend_from_slice(b" = \"");
+    line.extend_from_slice(&escape(value));
+    line.push(b'"');
+
+    let mut out: Vec<Vec<u8>> = Vec::new();
+    let mut current: Option<Vec<u8>> = None;
     let mut done = false;
     let mut end_of_section: Option<usize> = None;
 
-    for raw in text.lines() {
-        let trimmed = raw.trim();
+    for raw in lines(text) {
+        let trimmed = trim(raw);
 
-        if let Some(name) = trimmed
-            .strip_prefix('[')
-            .and_then(|rest| rest.strip_suffix(']'))
-        {
+        if let Some(name) = section_name(trimmed) {
             // Leaving the section we wanted without having found the key:
-            // remember where it ended so the key can go in at the bottom of
-            // it rather than at the bottom of the file, under a heading that
+            // remember where it ended so the key goes in at the bottom of it
+            // rather than at the bottom of the file, under a heading that
             // would put it in somebody else's section.
-            if !done && current.as_deref() == Some(section) && end_of_section.is_none() {
+            if !done && current.as_deref() == Some(section.as_bytes()) && end_of_section.is_none() {
                 end_of_section = Some(out.len());
             }
-            current = Some(name.trim().to_string());
-            out.push(raw.to_string());
+            current = Some(name.to_vec());
+            out.push(raw.to_vec());
             continue;
         }
 
-        if !done && current.as_deref() == Some(section) && is_key_line(trimmed, key) {
+        if !done && current.as_deref() == Some(section.as_bytes()) && is_key_line(trimmed, key) {
             out.push(line.clone());
             done = true;
             continue;
         }
 
-        out.push(raw.to_string());
+        out.push(raw.to_vec());
     }
 
     if !done {
         match end_of_section {
             Some(at) => out.insert(at, line),
-            None if current.as_deref() == Some(section) => out.push(line),
+            None if current.as_deref() == Some(section.as_bytes()) => out.push(line),
             None => {
                 if !out.is_empty() {
-                    out.push(String::new());
+                    out.push(Vec::new());
                 }
-                out.push(format!("[{section}]"));
+                out.push(format!("[{section}]").into_bytes());
                 out.push(line);
             }
         }
     }
 
-    let mut result = out.join(ending);
-    result.push_str(ending);
-    result
+    join(out, ending)
 }
 
-fn read_ini_key(text: &str, section: &str, key: &str) -> Option<String> {
-    let mut current: Option<&str> = None;
+fn read_ini_key(text: &[u8], section: &str, key: &str) -> Option<Vec<u8>> {
+    let mut current: Option<&[u8]> = None;
 
-    for raw in text.lines() {
-        let trimmed = raw.trim();
+    for raw in lines(text) {
+        let trimmed = trim(raw);
 
-        if let Some(name) = trimmed
-            .strip_prefix('[')
-            .and_then(|rest| rest.strip_suffix(']'))
-        {
-            current = Some(name.trim());
+        if let Some(name) = section_name(trimmed) {
+            current = Some(name);
             continue;
         }
 
-        if current == Some(section) && is_key_line(trimmed, key) {
-            let value = trimmed.split_once('=')?.1.trim();
-            return Some(unescape_ini(value));
+        if current == Some(section.as_bytes()) && is_key_line(trimmed, key) {
+            let at = trimmed.iter().position(|byte| *byte == b'=')?;
+            return Some(unescape(trim(&trimmed[at + 1..])));
         }
     }
 
@@ -237,93 +299,107 @@ fn read_ini_key(text: &str, section: &str, key: &str) -> Option<String> {
 
 /// Whether a line assigns `key`, allowing for the spacing people and
 /// programs put around the equals sign.
-fn is_key_line(trimmed: &str, key: &str) -> bool {
+fn is_key_line(trimmed: &[u8], key: &str) -> bool {
     trimmed
-        .split_once('=')
-        .is_some_and(|(name, _)| name.trim() == key)
+        .iter()
+        .position(|byte| *byte == b'=')
+        .is_some_and(|at| trim(&trimmed[..at]) == key.as_bytes())
 }
 
-fn escape_ini(value: &str) -> String {
-    value.replace('\\', "\\\\").replace('"', "\\\"")
-}
-
-fn unescape_ini(value: &str) -> String {
-    let value = value
-        .strip_prefix('"')
-        .and_then(|rest| rest.strip_suffix('"'))
-        .unwrap_or(value);
-
-    let mut out = String::with_capacity(value.len());
-    let mut characters = value.chars();
-    while let Some(character) = characters.next() {
-        if character == '\\' {
-            match characters.next() {
-                Some(escaped) => out.push(escaped),
-                None => out.push('\\'),
-            }
-        } else {
-            out.push(character);
+/// Both files quote the same way, which was settled by giving OpenRCT2's own
+/// `set-rct2` a directory whose name held each character and reading back
+/// what it wrote.
+fn escape(value: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(value.len());
+    for byte in value {
+        if *byte == b'\\' || *byte == b'"' {
+            out.push(b'\\');
         }
+        out.push(*byte);
     }
     out
 }
 
-/// Sets a top level `key`, leaving every other line untouched.
+fn unescape(value: &[u8]) -> Vec<u8> {
+    let value = match (value.first(), value.last()) {
+        (Some(b'"'), Some(b'"')) if value.len() >= 2 => &value[1..value.len() - 1],
+        _ => value,
+    };
+
+    let mut out = Vec::with_capacity(value.len());
+    let mut escaped = false;
+    for byte in value {
+        if escaped {
+            out.push(*byte);
+            escaped = false;
+        } else if *byte == b'\\' {
+            escaped = true;
+        } else {
+            out.push(*byte);
+        }
+    }
+    if escaped {
+        out.push(b'\\');
+    }
+    out
+}
+
+/// Sets a top level `key`, copying every other line through as it was.
 ///
 /// Only a key at the start of a line is replaced. The same name indented
-/// under something else is a different setting, and rewriting it would move
-/// a value from one place in the document to another.
-fn set_yaml_key(text: &str, key: &str, value: &str) -> String {
+/// under something else is a different setting, and rewriting it would move a
+/// value from one place in the document to another.
+fn set_yaml_key(text: &[u8], key: &str, value: &[u8]) -> Vec<u8> {
     let ending = line_ending(text);
-    let line = format!("{key}: \"{}\"", escape_yaml(value));
 
-    let mut out: Vec<String> = Vec::new();
+    let mut line = Vec::new();
+    line.extend_from_slice(key.as_bytes());
+    line.extend_from_slice(b": \"");
+    line.extend_from_slice(&escape(value));
+    line.push(b'"');
+
+    let mut out: Vec<Vec<u8>> = Vec::new();
     let mut done = false;
 
-    for raw in text.lines() {
+    for raw in lines(text) {
         if !done && is_top_level_key(raw, key) {
             out.push(line.clone());
             done = true;
             continue;
         }
-        out.push(raw.to_string());
+        out.push(raw.to_vec());
     }
 
     if !done {
         out.insert(0, line);
     }
 
-    let mut result = out.join(ending);
-    result.push_str(ending);
-    result
+    join(out, ending)
 }
 
-fn read_yaml_key(text: &str, key: &str) -> Option<String> {
-    text.lines()
+fn read_yaml_key(text: &[u8], key: &str) -> Option<Vec<u8>> {
+    lines(text)
+        .into_iter()
         .find(|raw| is_top_level_key(raw, key))
         .map(|raw| {
-            let value = raw.split_once(':').map_or("", |(_, rest)| rest).trim();
-            unescape_yaml(value)
+            let after = raw
+                .iter()
+                .position(|byte| *byte == b':')
+                .map_or(&b""[..], |at| &raw[at + 1..]);
+            unescape_yaml(trim(after))
         })
 }
 
-fn is_top_level_key(raw: &str, key: &str) -> bool {
-    raw.strip_prefix(key)
-        .is_some_and(|rest| rest.trim_start().starts_with(':'))
+fn is_top_level_key(raw: &[u8], key: &str) -> bool {
+    raw.strip_prefix(key.as_bytes())
+        .is_some_and(|rest| trim(rest).first() == Some(&b':'))
 }
 
-fn escape_yaml(value: &str) -> String {
-    value.replace('\\', "\\\\").replace('"', "\\\"")
-}
-
-fn unescape_yaml(value: &str) -> String {
-    if value.starts_with('"') && value.ends_with('"') && value.len() >= 2 {
-        return unescape_ini(value);
+fn unescape_yaml(value: &[u8]) -> Vec<u8> {
+    if value.len() >= 2 && value.first() == Some(&b'\'') && value.last() == Some(&b'\'') {
+        return value[1..value.len() - 1].to_vec();
     }
-    if value.starts_with('\'') && value.ends_with('\'') && value.len() >= 2 {
-        return value[1..value.len() - 1].replace("''", "'");
-    }
-    value.to_string()
+    unescape(value)
 }
 
 fn io(error: std::io::Error) -> CoreError {
@@ -332,9 +408,9 @@ fn io(error: std::io::Error) -> CoreError {
 
 #[cfg(test)]
 mod tests {
-    use super::{escape_ini, read_ini_key, read_yaml_key, set_ini_key, set_yaml_key, unescape_ini};
+    use super::{escape, read_ini_key, read_yaml_key, set_ini_key, set_yaml_key, unescape};
 
-    const OPENRCT2: &str = "\
+    const OPENRCT2: &[u8] = b"\
 [general]
 always_show_gridlines = false
 rct1_path = \"/old/rct1\"
@@ -345,14 +421,24 @@ language = en-US
 game_path = \"not this one\"
 ";
 
+    fn text(bytes: &[u8]) -> String {
+        String::from_utf8_lossy(bytes).into_owned()
+    }
+
+    fn line_count(bytes: &[u8]) -> usize {
+        bytes.iter().filter(|byte| **byte == b'\n').count()
+    }
+
     #[test]
     fn a_key_is_replaced_where_it_stands() {
-        let out = set_ini_key(OPENRCT2, "general", "game_path", "/new/rct2");
-        assert!(out.contains("game_path = \"/new/rct2\""));
-        assert_eq!(out.lines().count(), OPENRCT2.lines().count());
+        let out = set_ini_key(OPENRCT2, "general", "game_path", b"/new/rct2");
+        assert!(text(&out).contains("game_path = \"/new/rct2\""));
+        assert_eq!(line_count(&out), line_count(OPENRCT2));
         assert_eq!(
-            out.lines().position(|l| l.starts_with("game_path")),
-            OPENRCT2.lines().position(|l| l.starts_with("game_path")),
+            text(&out).lines().position(|l| l.starts_with("game_path")),
+            text(OPENRCT2)
+                .lines()
+                .position(|l| l.starts_with("game_path")),
             "the line must not move"
         );
     }
@@ -361,15 +447,18 @@ game_path = \"not this one\"
     fn every_other_line_survives_untouched() {
         // This file is somebody's key bindings and language. Rewriting it
         // from what we understand of it would drop everything we do not.
-        let out = set_ini_key(OPENRCT2, "general", "game_path", "/new/rct2");
-        for line in OPENRCT2.lines().filter(|l| !l.starts_with("game_path")) {
+        let out = text(&set_ini_key(OPENRCT2, "general", "game_path", b"/new/rct2"));
+        for line in text(OPENRCT2)
+            .lines()
+            .filter(|l| !l.starts_with("game_path"))
+        {
             assert!(out.contains(line), "lost: {line}");
         }
     }
 
     #[test]
     fn the_same_key_in_another_section_is_left_alone() {
-        let out = set_ini_key(OPENRCT2, "general", "game_path", "/new/rct2");
+        let out = text(&set_ini_key(OPENRCT2, "general", "game_path", b"/new/rct2"));
         assert!(
             out.contains("game_path = \"not this one\""),
             "[interface] was edited"
@@ -380,8 +469,12 @@ game_path = \"not this one\"
     fn a_missing_key_joins_its_section_rather_than_the_end_of_the_file() {
         // Appended after [interface] it would be an interface setting, and
         // OpenRCT2 would never read it.
-        let text = "[general]\nlanguage = en-US\n\n[interface]\ntoolbar = true\n";
-        let out = set_ini_key(text, "general", "game_path", "/rct2");
+        let out = text(&set_ini_key(
+            b"[general]\nlanguage = en-US\n\n[interface]\ntoolbar = true\n",
+            "general",
+            "game_path",
+            b"/rct2",
+        ));
 
         let game_path = out
             .lines()
@@ -393,12 +486,12 @@ game_path = \"not this one\"
 
     #[test]
     fn a_missing_section_is_added() {
-        let out = set_ini_key(
-            "[interface]\ntoolbar = true\n",
+        let out = text(&set_ini_key(
+            b"[interface]\ntoolbar = true\n",
             "general",
             "game_path",
-            "/rct2",
-        );
+            b"/rct2",
+        ));
         assert!(out.contains("[general]"));
         assert!(out.contains("game_path = \"/rct2\""));
         assert!(out.contains("toolbar = true"));
@@ -407,18 +500,18 @@ game_path = \"not this one\"
     #[test]
     fn an_empty_file_becomes_a_minimal_one() {
         // Both games fill in every other default themselves on first run.
-        let out = set_ini_key("", "general", "game_path", "/rct2");
-        assert_eq!(out, "[general]\ngame_path = \"/rct2\"\n");
+        let out = set_ini_key(b"", "general", "game_path", b"/rct2");
+        assert_eq!(text(&out), "[general]\ngame_path = \"/rct2\"\n");
     }
 
     #[test]
     fn spacing_around_the_equals_sign_does_not_hide_the_key() {
-        let out = set_ini_key(
-            "[general]\n  game_path   =   \"/old\"\n",
+        let out = text(&set_ini_key(
+            b"[general]\n  game_path   =   \"/old\"\n",
             "general",
             "game_path",
-            "/new",
-        );
+            b"/new",
+        ));
         assert!(out.contains("game_path = \"/new\""));
         assert!(!out.contains("/old"), "{out}");
     }
@@ -428,43 +521,48 @@ game_path = \"not this one\"
         // Checked against OpenRCT2 itself, by giving its own `set-rct2` a
         // directory with each character in the name and reading back what it
         // wrote.
-        assert_eq!(escape_ini(r#"/a "b" c"#), r#"/a \"b\" c"#);
-        assert_eq!(escape_ini(r"/a\b"), r"/a\\b");
+        assert_eq!(escape(br#"/a "b" c"#), br#"/a \"b\" c"#.to_vec());
+        assert_eq!(escape(br"/a\b"), br"/a\\b".to_vec());
     }
 
     #[test]
     fn a_path_survives_being_written_and_read_back() {
         for path in [
-            "/plain",
-            r#"/with "quotes""#,
-            r"/with\backslash",
-            "/with spaces",
+            &b"/plain"[..],
+            br#"/with "quotes""#,
+            br"/with\backslash",
+            b"/with spaces",
         ] {
-            let out = set_ini_key("", "general", "game_path", path);
+            let out = set_ini_key(b"", "general", "game_path", path);
             assert_eq!(
                 read_ini_key(&out, "general", "game_path").as_deref(),
                 Some(path),
-                "round trip failed for {path}"
+                "round trip failed for {}",
+                text(path)
             );
         }
     }
 
     #[test]
     fn unescaping_a_value_that_was_never_escaped_leaves_it_alone() {
-        assert_eq!(unescape_ini("/plain/path"), "/plain/path");
+        assert_eq!(unescape(b"/plain/path"), b"/plain/path".to_vec());
     }
 
     #[test]
     fn a_file_with_windows_line_endings_keeps_them() {
         // Mixing the two would show up as stray characters in an editor and
         // as a needlessly enormous diff in anybody's backups.
-        let text = "[general]\r\ngame_path = \"/old\"\r\n";
-        let out = set_ini_key(text, "general", "game_path", "/new");
-        assert!(!out.contains("\n\n"), "a bare newline crept in: {out:?}");
-        assert!(out.contains("game_path = \"/new\"\r\n"));
+        let out = set_ini_key(
+            b"[general]\r\ngame_path = \"/old\"\r\n",
+            "general",
+            "game_path",
+            b"/new",
+        );
+        assert!(!text(&out).contains("\n\n"), "a bare newline crept in");
+        assert!(text(&out).contains("game_path = \"/new\"\r\n"));
     }
 
-    const OPENLOCO: &str = "\
+    const OPENLOCO: &[u8] = b"\
 loco_install_path: \"/old/loco\"
 display:
   mode: window
@@ -473,11 +571,10 @@ language: en-GB
 
     #[test]
     fn a_top_level_yaml_key_is_replaced_in_place() {
-        let out = set_yaml_key(OPENLOCO, "loco_install_path", "/new/loco");
+        let out = text(&set_yaml_key(OPENLOCO, "loco_install_path", b"/new/loco"));
         assert!(out.contains("loco_install_path: \"/new/loco\""));
         assert!(out.contains("  mode: window"));
         assert!(out.contains("language: en-GB"));
-        assert_eq!(out.lines().count(), OPENLOCO.lines().count());
     }
 
     #[test]
@@ -485,8 +582,11 @@ language: en-GB
         // Nested under something else it is a different setting, and moving
         // a value there would change the meaning of a document we do not
         // otherwise understand.
-        let text = "display:\n  loco_install_path: nested\nlanguage: en-GB\n";
-        let out = set_yaml_key(text, "loco_install_path", "/loco");
+        let out = text(&set_yaml_key(
+            b"display:\n  loco_install_path: nested\nlanguage: en-GB\n",
+            "loco_install_path",
+            b"/loco",
+        ));
 
         assert!(out.contains("  loco_install_path: nested"), "{out}");
         assert!(out.starts_with("loco_install_path: \"/loco\""), "{out}");
@@ -494,26 +594,35 @@ language: en-GB
 
     #[test]
     fn a_missing_yaml_key_is_added_at_the_top() {
-        let out = set_yaml_key("language: en-GB\n", "loco_install_path", "/loco");
-        assert_eq!(out, "loco_install_path: \"/loco\"\nlanguage: en-GB\n");
+        let out = set_yaml_key(b"language: en-GB\n", "loco_install_path", b"/loco");
+        assert_eq!(
+            text(&out),
+            "loco_install_path: \"/loco\"\nlanguage: en-GB\n"
+        );
     }
 
     #[test]
     fn an_empty_yaml_file_becomes_a_single_line() {
         // What OpenLoco was actually given in testing, and it filled in the
         // other hundred and seventy lines itself.
-        let out = set_yaml_key("", "loco_install_path", "/loco");
-        assert_eq!(out, "loco_install_path: \"/loco\"\n");
+        let out = set_yaml_key(b"", "loco_install_path", b"/loco");
+        assert_eq!(text(&out), "loco_install_path: \"/loco\"\n");
     }
 
     #[test]
     fn a_yaml_path_survives_being_written_and_read_back() {
-        for path in ["/plain", r#"/with "quotes""#, "/with: colon", "/with #hash"] {
-            let out = set_yaml_key("", "loco_install_path", path);
+        for path in [
+            &b"/plain"[..],
+            br#"/with "quotes""#,
+            b"/with: colon",
+            b"/with #hash",
+        ] {
+            let out = set_yaml_key(b"", "loco_install_path", path);
             assert_eq!(
                 read_yaml_key(&out, "loco_install_path").as_deref(),
                 Some(path),
-                "round trip failed for {path}"
+                "round trip failed for {}",
+                text(path)
             );
         }
     }
@@ -522,10 +631,68 @@ language: en-GB
     fn a_value_openloco_wrote_unquoted_is_read_back_whole() {
         // It writes the path bare when nothing in it needs quoting, so
         // reading has to cope with both.
-        let text = "loco_install_path: /Users/someone/Game Data/locomotion\n";
+        let text_in = b"loco_install_path: /Users/someone/Game Data/locomotion\n";
         assert_eq!(
-            read_yaml_key(text, "loco_install_path").as_deref(),
-            Some("/Users/someone/Game Data/locomotion")
+            read_yaml_key(text_in, "loco_install_path").as_deref(),
+            Some(&b"/Users/someone/Game Data/locomotion"[..])
+        );
+    }
+
+    /// The bytes OpenLoco writes for an owner face nobody has chosen. Its
+    /// configuration stops being text the first time the game runs, so every
+    /// install after the first one read it and failed with "stream did not
+    /// contain valid UTF-8".
+    const OPENLOCO_AFTER_RUNNING: &[u8] =
+        b"loco_install_path: \"/old/loco\"\npreferredOwnerFace:\n  flags: 4294967295\n  name: \xff\xff\xff\xff\xff\xff\xff\xff\n  checksum: 4294967295\nlanguage: en-GB\n";
+
+    #[test]
+    fn a_configuration_that_is_not_text_is_still_edited() {
+        let out = set_yaml_key(OPENLOCO_AFTER_RUNNING, "loco_install_path", b"/new/loco");
+
+        assert_eq!(
+            read_yaml_key(&out, "loco_install_path").as_deref(),
+            Some(&b"/new/loco"[..])
+        );
+    }
+
+    #[test]
+    fn the_bytes_that_are_not_text_come_through_unchanged() {
+        // Decoding lossily and writing back would replace the owner face
+        // with question marks, which is somebody's setting quietly destroyed
+        // by a launcher that was only asked to record a path.
+        let out = set_yaml_key(OPENLOCO_AFTER_RUNNING, "loco_install_path", b"/new/loco");
+
+        assert!(
+            out.windows(8).any(|window| window == [0xff; 8]),
+            "the raw bytes were mangled"
+        );
+        assert!(
+            String::from_utf8(out.clone()).is_err(),
+            "it should still not be text"
+        );
+        for line in [
+            &b"  flags: 4294967295"[..],
+            b"  checksum: 4294967295",
+            b"language: en-GB",
+        ] {
+            assert!(
+                out.windows(line.len()).any(|window| window == line),
+                "lost: {}",
+                text(line)
+            );
+        }
+    }
+
+    #[test]
+    fn a_path_that_is_not_text_is_written_and_read_back_whole() {
+        // Paths are bytes on this platform. Going through a string would
+        // write a mangled one and point the game at a directory that does
+        // not exist.
+        let path = b"/games/\xff\xfe/loco";
+        let out = set_yaml_key(b"", "loco_install_path", path);
+        assert_eq!(
+            read_yaml_key(&out, "loco_install_path").as_deref(),
+            Some(&path[..])
         );
     }
 }
