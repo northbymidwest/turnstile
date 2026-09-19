@@ -142,7 +142,17 @@ fn write_replacing(path: &Path, text: &[u8]) -> Result<(), CoreError> {
         path.extension().unwrap_or_default().to_string_lossy()
     ));
 
-    std::fs::write(&temporary, text).map_err(io)?;
+    // Flushed before the rename, or the rename can land ahead of the bytes and
+    // a crash leaves an empty file under the real name.
+    let write = (|| {
+        let mut file = std::fs::File::create(&temporary)?;
+        std::io::Write::write_all(&mut file, text)?;
+        file.sync_all()
+    })();
+    if let Err(error) = write {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(io(error));
+    }
 
     if let Err(error) = std::fs::rename(&temporary, path) {
         let _ = std::fs::remove_file(&temporary);
@@ -360,7 +370,17 @@ fn set_yaml_key(text: &[u8], key: &str, value: &[u8]) -> Vec<u8> {
     }
 
     if !done {
-        out.insert(0, line);
+        // After any leading `---` or `%YAML`: a key above a document marker
+        // would push the rest of the file into a second document the game
+        // never reads.
+        let at = out
+            .iter()
+            .position(|raw| {
+                let t = trim(raw);
+                !(t.is_empty() || t.starts_with(b"%") || t.starts_with(b"---"))
+            })
+            .unwrap_or(out.len());
+        out.insert(at, line);
     }
 
     join(out, ending)
@@ -574,6 +594,15 @@ language: en-GB
         assert_eq!(
             text(&out),
             "loco_install_path: \"/loco\"\nlanguage: en-GB\n"
+        );
+    }
+
+    #[test]
+    fn a_new_yaml_key_goes_below_a_document_marker_not_above_it() {
+        let out = set_yaml_key(b"---\nlanguage: en-GB\n", "loco_install_path", b"/loco");
+        assert_eq!(
+            text(&out),
+            "---\nloco_install_path: \"/loco\"\nlanguage: en-GB\n"
         );
     }
 

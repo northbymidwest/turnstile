@@ -148,16 +148,17 @@ pub fn show_disable_report(mtm: MainThreadMarker, report: &DisableReport) {
         )
     };
     alert.setInformativeText(&NSString::from_str(&message));
-    alert.addButtonWithTitle(&NSString::from_str("OK"));
+    // No button added: NSAlert's own default is already localized.
     alert.runModal();
 }
 
+/// Decimal units, which is what Finder and the rest of macOS mean by KB.
 fn human_bytes(bytes: u64) -> String {
     const UNITS: [&str; 4] = ["bytes", "KB", "MB", "GB"];
     let mut value = bytes as f64;
     let mut unit = 0;
-    while value >= 1024.0 && unit < UNITS.len() - 1 {
-        value /= 1024.0;
+    while value >= 1000.0 && unit < UNITS.len() - 1 {
+        value /= 1000.0;
         unit += 1;
     }
     if unit == 0 {
@@ -174,9 +175,9 @@ mod tests {
     #[test]
     fn byte_counts_are_reported_in_readable_units() {
         assert_eq!(human_bytes(512), "512 bytes");
-        assert_eq!(human_bytes(2048), "2.0 KB");
-        assert_eq!(human_bytes(5 * 1024 * 1024), "5.0 MB");
-        assert_eq!(human_bytes(3 * 1024 * 1024 * 1024), "3.0 GB");
+        assert_eq!(human_bytes(2000), "2.0 KB");
+        assert_eq!(human_bytes(5_000_000), "5.0 MB");
+        assert_eq!(human_bytes(3_000_000_000), "3.0 GB");
     }
 
     #[test]

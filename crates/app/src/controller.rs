@@ -10,8 +10,9 @@
 //! for why that shape was tried and reverted as unsound.
 //!
 //! Every effect that touches the version store is spawned through
-//! `storelock::spawn`, which holds one process-wide lock for the operation's
-//! whole duration; the two exceptions are marked at their arms in `perform`.
+//! `storelock::spawn`, which holds the store lock for the operation's whole
+//! duration, against this process's other workers and against a second copy of
+//! Turnstile alike; the two exceptions are marked at their arms in `perform`.
 
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -37,7 +38,7 @@ use turnstile_core::store::{Mode, VersionStore};
 
 use crate::mainqueue;
 use crate::prefs::{Prefs, mode_for};
-use crate::state::{Effect, Msg, ReleaseRow, UiState, reduce};
+use crate::state::{Effect, GameDataError, Msg, ReleaseRow, UiState, reduce};
 use crate::storelock;
 use crate::views::{self, Views};
 
@@ -168,12 +169,14 @@ pub fn start(mtm: MainThreadMarker) {
     // `reconcile` then decides where `bin` points. The other way round,
     // `link_to_newest` would leave the restored build inactive.
     //
-    // This is the one lock acquisition made on the main thread, and it cannot
-    // block: no worker exists yet, since the first `handle` call is below.
-    // Do not move it after that `handle`, which would make it contended.
+    // The one lock acquisition made on the main thread, so it must not block.
+    // No worker exists yet -- the first `handle` call is below, and moving
+    // this after it would make the process lock contended -- but a second copy
+    // of Turnstile can hold the machine lock, which is why this is
+    // `try_serialized`.
     let mode = controller.mode();
     let mut repair_failures: Vec<String> = Vec::new();
-    storelock::serialized(|| {
+    storelock::try_serialized(|| {
         for game in GameId::ALL {
             if let Some(store) = store_for(game) {
                 install::recover_debris(&store, mode);
@@ -253,10 +256,7 @@ impl Controller {
     pub(crate) fn perform(self: &Rc<Self>, effect: Effect) {
         let mode = self.mode();
         match effect {
-            Effect::SavePref(pref) => {
-                let game = self.state.borrow().selected_game;
-                self.prefs.save(pref, game);
-            }
+            Effect::SavePref(pref) => self.prefs.save(pref),
 
             // Serialized with every mutation, not just with other reads: a
             // removal running alongside would have `installed()` and `active()`
@@ -320,10 +320,27 @@ impl Controller {
                 installer,
             } => {
                 let root = self.install_root();
+                // Registered like an install's, so switching away really does
+                // stop it rather than leaving an uncancellable job holding the
+                // store lock.
+                let cancel = Arc::new(AtomicBool::new(false));
+                if let Some(previous) = self.cancel.replace(Some(cancel.clone())) {
+                    previous.store(true, Ordering::Relaxed);
+                }
                 storelock::spawn(move || {
                     let result = (|| {
-                        let dirs = Dirs::system().ok_or_else(|| err("no home directory"))?;
+                        let dirs = Dirs::system()
+                            .ok_or_else(|| GameDataError::Failed(err("no home directory")))?;
                         let destination = root.join(game.directory());
+
+                        // Before extracting, not after: reading the installer's
+                        // header is cheap, and unpacking gigabytes to discover
+                        // the wrong file was picked is not.
+                        match gamedata::identify(&installer) {
+                            Ok(Some(found)) if found == game => {}
+                            Ok(_) => return Err(GameDataError::Unrecognised),
+                            Err(e) => return Err(GameDataError::Failed(e.to_string())),
+                        }
 
                         gamedata::install_game_data(
                             &installer,
@@ -336,15 +353,15 @@ impl Controller {
                                     value: progress.value,
                                 });
                             },
-                            &AtomicBool::new(false),
+                            &cancel,
                         )
-                        .map_err(|e| e.to_string())?;
+                        .map_err(|e| GameDataError::Failed(e.to_string()))?;
 
                         // Extracting without telling the game leaves somebody
                         // with the data installed and the game still saying it
                         // cannot find it.
                         gameconfig::point_at(game, &dirs, &destination)
-                            .map_err(|e| e.to_string())?;
+                            .map_err(|e| GameDataError::Failed(e.to_string()))?;
 
                         Ok(destination)
                     })();
@@ -386,6 +403,7 @@ impl Controller {
                 generation,
                 game,
                 tag,
+                download,
             } => {
                 // Starting an install cancels whatever was already running: in
                 // compatible mode the two would otherwise race the same `bin`.
@@ -397,7 +415,6 @@ impl Controller {
                 if let Some(previous) = self.cancel.replace(Some(cancel.clone())) {
                     previous.store(true, Ordering::Relaxed);
                 }
-                let include_develop = self.state.borrow().show_develop;
                 // The lock is held for the whole install, download included,
                 // rather than only for the two renames at the end: splitting it
                 // would leave the staging directory unprotected for the slow
@@ -409,21 +426,12 @@ impl Controller {
                     let mut throttle = ProgressThrottle::new();
                     let result = (|| {
                         let store = store_for(game).ok_or_else(|| err("no home directory"))?;
-                        let releases = GitHub::new()
-                            .releases_for(game, include_develop, HostArch::current())
-                            .map_err(|e| e.to_string())?;
-                        // Every listed release already carries a download this
-                        // host can run, so there is no asset selection here.
-                        let release = releases
-                            .iter()
-                            .find(|r| r.tag == tag)
-                            .ok_or_else(|| err("that build is no longer listed"))?;
 
                         install::install(
                             &store,
                             mode,
                             &tag,
-                            &release.download,
+                            &download,
                             // Throttled here rather than by making `apply`
                             // incremental, which would mean diffing what is
                             // displayed against what is in state: a real
@@ -574,7 +582,7 @@ impl Controller {
                         .installed
                         .iter()
                         .find(|i| i.name == name)
-                        .map(|i| i.tag.clone())
+                        .map(|i| views::display_tag(&i.tag))
                         .unwrap_or_else(|| name.clone())
                 };
                 if views::alert::confirm_remove(self.mtm, &tag) {
@@ -648,6 +656,7 @@ fn to_rows(releases: Vec<Release>) -> Vec<ReleaseRow> {
             tag: r.tag,
             age: r.published.map(|at| Age::since(at, now)),
             channel: r.channel,
+            download: r.download,
         })
         .collect()
 }

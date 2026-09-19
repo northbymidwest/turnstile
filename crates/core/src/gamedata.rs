@@ -229,8 +229,26 @@ fn extract_into(
             continue;
         };
 
-        for (index, part) in targets.clone() {
+        for &(index, part) in targets {
             let file = &files[index];
+
+            // The overwhelming majority of files are one part, and that part is
+            // in hand: write it without ever storing it.
+            if file.parts().len() == 1 {
+                let mut out = create_file(destination, file.path())?;
+                file.assemble_into(std::slice::from_ref(&data), &mut out)
+                    .map_err(|error| {
+                        CoreError::ExtractionFailed(format!("{}: {error}", file.path()))
+                    })?;
+                written += 1;
+                #[allow(clippy::cast_precision_loss)]
+                progress(Progress {
+                    status: Status::Extracting,
+                    value: Some(written as f64 / total as f64),
+                });
+                continue;
+            }
+
             let slots = pending
                 .entry(index)
                 .or_insert_with(|| vec![None; file.parts().len()]);
@@ -243,12 +261,10 @@ fn extract_into(
                     .into_iter()
                     .flatten()
                     .collect();
-
-                let bytes = file.assemble(&parts).map_err(|error| {
+                let mut out = create_file(destination, file.path())?;
+                file.assemble_into(&parts, &mut out).map_err(|error| {
                     CoreError::ExtractionFailed(format!("{}: {error}", file.path()))
                 })?;
-
-                write_file(destination, file.path(), &bytes)?;
                 written += 1;
 
                 #[allow(clippy::cast_precision_loss)]
@@ -280,10 +296,10 @@ fn is_install_file(file: &inno::gog::InstallerFile) -> bool {
     matches!(file.root(), None | Some("app"))
 }
 
-/// Writes one extracted file, refusing any path that would leave the
-/// destination. The paths come out of the installer, so they are not to be
+/// Opens one extracted file for writing, refusing any path that would leave
+/// the destination. The paths come out of the installer, so they are not to be
 /// trusted with a `..` or a leading separator.
-fn write_file(destination: &Path, path: &str, bytes: &[u8]) -> Result<(), CoreError> {
+fn create_file(destination: &Path, path: &str) -> Result<std::fs::File, CoreError> {
     let mut target = destination.to_path_buf();
 
     for component in path.split('/') {
@@ -308,7 +324,7 @@ fn write_file(destination: &Path, path: &str, bytes: &[u8]) -> Result<(), CoreEr
         std::fs::create_dir_all(parent).map_err(io)?;
     }
 
-    std::fs::write(&target, bytes).map_err(io)
+    std::fs::File::create(&target).map_err(io)
 }
 
 fn open(installer: &Path) -> Result<inno::Inno<std::io::BufReader<std::fs::File>>, CoreError> {
@@ -326,7 +342,7 @@ fn io(error: std::io::Error) -> CoreError {
 
 #[cfg(test)]
 mod tests {
-    use super::{OriginalGame, installed_at, write_file};
+    use super::{OriginalGame, create_file, installed_at};
 
     #[test]
     fn every_game_has_a_directory_and_a_marker_of_its_own() {
@@ -362,8 +378,10 @@ mod tests {
 
     #[test]
     fn a_file_is_written_under_the_destination() {
+        use std::io::Write;
         let directory = tempfile::tempdir().unwrap();
-        write_file(directory.path(), "Data/g1.dat", b"contents").unwrap();
+        let mut file = create_file(directory.path(), "Data/g1.dat").unwrap();
+        file.write_all(b"contents").unwrap();
         assert_eq!(
             std::fs::read(directory.path().join("Data/g1.dat")).unwrap(),
             b"contents"
@@ -373,7 +391,7 @@ mod tests {
     #[test]
     fn a_path_that_climbs_out_of_the_destination_is_refused() {
         let directory = tempfile::tempdir().unwrap();
-        let error = write_file(directory.path(), "../escaped.txt", b"x").unwrap_err();
+        let error = create_file(directory.path(), "../escaped.txt").unwrap_err();
         assert!(error.to_string().contains("outside"), "{error}");
         assert!(!directory.path().join("../escaped.txt").exists());
     }
@@ -381,14 +399,14 @@ mod tests {
     #[test]
     fn a_leading_separator_does_not_make_the_path_absolute() {
         let directory = tempfile::tempdir().unwrap();
-        write_file(directory.path(), "/etc/passwd", b"x").unwrap();
+        create_file(directory.path(), "/etc/passwd").unwrap();
         assert!(directory.path().join("etc/passwd").exists());
     }
 
     #[test]
     fn a_path_that_names_nothing_is_refused() {
         let directory = tempfile::tempdir().unwrap();
-        assert!(write_file(directory.path(), "/", b"x").is_err());
+        assert!(create_file(directory.path(), "/").is_err());
     }
 
     /// The installers are hundreds of megabytes and nobody's to redistribute,

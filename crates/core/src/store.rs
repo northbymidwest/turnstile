@@ -386,7 +386,14 @@ impl VersionStore {
             )));
         }
 
-        let Some(active_tag) = self.active_multi()? else {
+        // A link whose target is gone counts as nothing linked, not as a
+        // version to move: renaming it would fail with a bare ENOENT and leave
+        // the dangling link in place.
+        let active = self
+            .active_multi()?
+            .filter(|name| self.game.version_path(&self.dirs, name).is_dir());
+
+        let Some(active_tag) = active else {
             // Nothing is linked. Remove a stray link and leave the store be.
             if std::fs::symlink_metadata(&bin)
                 .map(|m| m.file_type().is_symlink())
@@ -1033,6 +1040,24 @@ mod tests {
         assert!(
             s.root.join("OpenRCT2/.bin.incoming").is_dir(),
             "nothing was deleted"
+        );
+    }
+
+    #[test]
+    fn disabling_over_a_dangling_link_clears_it_and_keeps_every_build() {
+        let s = Scratch::new("disabledangling");
+        let store = s.store();
+        s.make_install(&s.root.join("OpenRCT2/versions/v1"), Some("v1"));
+        std::fs::create_dir_all(s.root.join("OpenRCT2")).unwrap();
+        std::os::unix::fs::symlink("versions/gone", store.bin_path()).unwrap();
+
+        let report = store.disable_multi_version().unwrap();
+
+        assert_eq!(report.kept, None);
+        assert_eq!(report.retained.len(), 1);
+        assert!(
+            std::fs::symlink_metadata(store.bin_path()).is_err(),
+            "the dangling link must be cleared"
         );
     }
 

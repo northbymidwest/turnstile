@@ -126,19 +126,18 @@ pub fn apply(state: &UiState, views: &Views) {
     let active_entry = state.active_entry();
     views.installed_popup.removeAllItems();
     for entry in &state.installed {
+        let tag = display_tag(&entry.tag);
         let label = if active_entry.map(|e| e.name.as_str()) == Some(entry.name.as_str()) {
-            strings::format1("ActiveVersion", &entry.tag)
+            strings::format1("ActiveVersion", &tag)
         } else {
-            entry.tag.clone()
+            tag
         };
         views
             .installed_popup
             .addItemWithTitle(&NSString::from_str(&label));
     }
-    if !state.installed.is_empty() {
-        views
-            .installed_popup
-            .selectItemAtIndex(state.selected_installed as isize);
+    if let Some(row) = state.installed_row() {
+        views.installed_popup.selectItemAtIndex(row as isize);
     }
     views
         .installed_popup
@@ -160,10 +159,8 @@ pub fn apply(state: &UiState, views: &Views) {
             .releases_popup
             .addItemWithTitle(&NSString::from_str(&label));
     }
-    if !state.releases.is_empty() {
-        views
-            .releases_popup
-            .selectItemAtIndex(state.selected_release as isize);
+    if let Some(row) = state.release_row() {
+        views.releases_popup.selectItemAtIndex(row as isize);
     }
     views
         .releases_popup
@@ -295,6 +292,16 @@ pub fn apply(state: &UiState, views: &Views) {
             views.alert.show(&title, &message);
         }
         None => views.alert.hide(),
+    }
+}
+
+/// Core's placeholder for an installation with no readable `.version` file is
+/// an identifier, not display text.
+pub fn display_tag(tag: &str) -> String {
+    if tag == turnstile_core::store::UNKNOWN_TAG {
+        strings::get("Unknown")
+    } else {
+        tag.to_string()
     }
 }
 

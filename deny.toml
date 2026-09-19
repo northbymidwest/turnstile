@@ -5,7 +5,7 @@
 [graph]
 all-features = false
 
-# Nothing copyleft enters the tree. Turnstile is MIT and ships as a signed
+# Nothing copyleft enters the tree. Turnstile is 0BSD and ships as a signed
 # binary, so a dependency under a reciprocal license would be a real problem
 # for anyone redistributing it, and the time to find out is here rather than
 # from a downstream complaint.

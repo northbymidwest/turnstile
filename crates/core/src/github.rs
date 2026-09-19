@@ -91,11 +91,7 @@ impl GitHub {
 
     /// The only place `ureq` is touched: a GET against the public API, shared
     /// with `selfupdate`, which wants the same rate-limit and error handling.
-    pub(crate) fn get_public(&self, url: &str) -> Result<String, CoreError> {
-        self.get(url)
-    }
-
-    fn get(&self, url: &str) -> Result<String, CoreError> {
+    pub(crate) fn get(&self, url: &str) -> Result<String, CoreError> {
         let mut response = ureq::get(url)
             .header("User-Agent", USER_AGENT)
             .header("Accept", "application/vnd.github+json")

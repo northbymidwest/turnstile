@@ -32,6 +32,20 @@ pub const BUILTIN_EN: &[(&str, &str)] = &[
     ("Update", "Update"),
     ("Dismiss", "Dismiss"),
     ("Settings", "Settings"),
+    ("MenuAbout", "About {0}"),
+    ("MenuSettings", "Settings\u{2026}"),
+    ("MenuHide", "Hide {0}"),
+    ("MenuQuit", "Quit {0}"),
+    ("MenuEdit", "Edit"),
+    ("MenuUndo", "Undo"),
+    ("MenuRedo", "Redo"),
+    ("MenuCut", "Cut"),
+    ("MenuCopy", "Copy"),
+    ("MenuPaste", "Paste"),
+    ("MenuSelectAll", "Select All"),
+    ("MenuWindow", "Window"),
+    ("MenuMinimize", "Minimize"),
+    ("MenuClose", "Close"),
     ("CheckForUpdates", "Check for updates on launch"),
     (
         "CheckForUpdatesDetail",
@@ -130,6 +144,20 @@ pub const BUILTIN_EN: &[(&str, &str)] = &[
 /// Read only by that test.
 #[cfg_attr(not(test), allow(dead_code))]
 pub const REQUIRED_KEYS: &[&str] = &[
+    "MenuAbout",
+    "MenuSettings",
+    "MenuHide",
+    "MenuQuit",
+    "MenuEdit",
+    "MenuUndo",
+    "MenuRedo",
+    "MenuCut",
+    "MenuCopy",
+    "MenuPaste",
+    "MenuSelectAll",
+    "MenuWindow",
+    "MenuMinimize",
+    "MenuClose",
     "Update",
     "Dismiss",
     "Settings",
@@ -214,11 +242,32 @@ pub fn get(key: &str) -> String {
 
 /// .NET's `{0}` placeholders, kept verbatim. An index with no corresponding
 /// argument is left in the output rather than substituted with garbage.
+///
+/// One pass over the template, so a placeholder that appears inside a
+/// substituted argument is output rather than substituted in turn.
 pub fn substitute(template: &str, args: &[&str]) -> String {
-    let mut out = template.to_string();
-    for (i, arg) in args.iter().enumerate() {
-        out = out.replace(&format!("{{{i}}}"), arg);
+    let mut out = String::with_capacity(template.len());
+    let mut rest = template;
+    while let Some(open) = rest.find('{') {
+        out.push_str(&rest[..open]);
+        let after = &rest[open + 1..];
+        match after
+            .find('}')
+            .map(|close| (&after[..close], &after[close + 1..]))
+            .and_then(|(digits, tail)| Some((digits.parse::<usize>().ok()?, tail)))
+            .and_then(|(index, tail)| Some((*args.get(index)?, tail)))
+        {
+            Some((arg, tail)) => {
+                out.push_str(arg);
+                rest = tail;
+            }
+            None => {
+                out.push('{');
+                rest = after;
+            }
+        }
     }
+    out.push_str(rest);
     out
 }
 
@@ -256,6 +305,19 @@ pub fn status(status: Status) -> String {
 mod tests {
     use super::*;
     use turnstile_core::age::Age;
+
+    #[test]
+    fn an_argument_that_looks_like_a_placeholder_is_not_substituted_again() {
+        assert_eq!(
+            substitute("{0} and {1}", &["{1}", "second"]),
+            "{1} and second"
+        );
+    }
+
+    #[test]
+    fn an_index_with_no_argument_is_left_alone() {
+        assert_eq!(substitute("{0} {5} {", &["a"]), "a {5} {");
+    }
 
     #[test]
     fn a_missing_key_falls_back_to_the_key_itself_rather_than_panicking() {

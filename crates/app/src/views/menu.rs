@@ -12,45 +12,52 @@ use objc2::{MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{NSApplication, NSMenu, NSMenuItem};
 use objc2_foundation::NSString;
 
+use crate::strings;
+
 pub fn install(mtm: MainThreadMarker) {
     let app = NSApplication::sharedApplication(mtm);
     let main = NSMenu::new(mtm);
+    let name = "Turnstile";
 
     main.addItem(&submenu(
         mtm,
-        "Turnstile",
+        name,
         &[
-            ("About Turnstile", "orderFrontStandardAboutPanel:", ""),
-            ("-", "", ""),
+            (
+                strings::format1("MenuAbout", name),
+                "orderFrontStandardAboutPanel:",
+                "",
+            ),
+            (SEPARATOR.into(), "", ""),
             // No target, so this travels the responder chain to the
             // application delegate, which implements it.
-            ("Settings...", "showSettings:", ","),
-            ("-", "", ""),
-            ("Hide Turnstile", "hide:", "h"),
-            ("Quit Turnstile", "terminate:", "q"),
+            (strings::get("MenuSettings"), "showSettings:", ","),
+            (SEPARATOR.into(), "", ""),
+            (strings::format1("MenuHide", name), "hide:", "h"),
+            (strings::format1("MenuQuit", name), "terminate:", "q"),
         ],
     ));
 
     main.addItem(&submenu(
         mtm,
-        "Edit",
+        &strings::get("MenuEdit"),
         &[
-            ("Undo", "undo:", "z"),
-            ("Redo", "redo:", "Z"),
-            ("-", "", ""),
-            ("Cut", "cut:", "x"),
-            ("Copy", "copy:", "c"),
-            ("Paste", "paste:", "v"),
-            ("Select All", "selectAll:", "a"),
+            (strings::get("MenuUndo"), "undo:", "z"),
+            (strings::get("MenuRedo"), "redo:", "Z"),
+            (SEPARATOR.into(), "", ""),
+            (strings::get("MenuCut"), "cut:", "x"),
+            (strings::get("MenuCopy"), "copy:", "c"),
+            (strings::get("MenuPaste"), "paste:", "v"),
+            (strings::get("MenuSelectAll"), "selectAll:", "a"),
         ],
     ));
 
     let window_menu = submenu(
         mtm,
-        "Window",
+        &strings::get("MenuWindow"),
         &[
-            ("Minimize", "performMiniaturize:", "m"),
-            ("Close", "performClose:", "w"),
+            (strings::get("MenuMinimize"), "performMiniaturize:", "m"),
+            (strings::get("MenuClose"), "performClose:", "w"),
         ],
     );
     main.addItem(&window_menu);
@@ -61,18 +68,20 @@ pub fn install(mtm: MainThreadMarker) {
     }
 }
 
-/// Builds a top-level menu bar item carrying a submenu. `"-"` becomes a
+const SEPARATOR: &str = "-";
+
+/// Builds a top-level menu bar item carrying a submenu. `SEPARATOR` becomes a
 /// separator; every other entry becomes a titled item whose action is resolved
 /// by name and sent up the responder chain, so whichever object implements the
 /// selector handles it.
 fn submenu(
     mtm: MainThreadMarker,
     title: &str,
-    entries: &[(&str, &str, &str)],
+    entries: &[(String, &str, &str)],
 ) -> Retained<NSMenuItem> {
     let menu = NSMenu::initWithTitle(NSMenu::alloc(mtm), &NSString::from_str(title));
     for (label, selector, key) in entries {
-        if *label == "-" {
+        if label == SEPARATOR {
             menu.addItem(&NSMenuItem::separatorItem(mtm));
             continue;
         }

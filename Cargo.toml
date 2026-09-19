@@ -15,7 +15,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 time = { version = "0.3", features = ["parsing", "formatting", "macros"] }
 ureq = { version = "3", default-features = false, features = ["rustls"] }
-inno = { git = "https://github.com/northbymidwest/inno", rev = "53d9a952f607a847bd78395a052eaa58bd4e3768", default-features = false, features = ["extract"] }
+inno = { git = "https://github.com/northbymidwest/inno", rev = "ac8343599bf3f874b01c239254c6bd610574fa80", default-features = false, features = ["gog"] }
 objc2 = "0.6"
 objc2-foundation = "0.3"
 objc2-app-kit = "0.3"

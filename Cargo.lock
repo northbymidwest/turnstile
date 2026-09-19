@@ -290,7 +290,7 @@ dependencies = [
 [[package]]
 name = "inno"
 version = "0.6.0"
-source = "git+https://github.com/northbymidwest/inno?rev=53d9a952f607a847bd78395a052eaa58bd4e3768#53d9a952f607a847bd78395a052eaa58bd4e3768"
+source = "git+https://github.com/northbymidwest/inno?rev=ac8343599bf3f874b01c239254c6bd610574fa80#ac8343599bf3f874b01c239254c6bd610574fa80"
 dependencies = [
  "bitflags 2.13.2",
  "codepage",

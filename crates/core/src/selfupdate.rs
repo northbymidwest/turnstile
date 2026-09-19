@@ -70,7 +70,7 @@ impl GitHub {
         current: &str,
     ) -> Result<Option<Update>, CoreError> {
         let url = format!("https://api.github.com/repos/{owner}/{repo}/releases/latest");
-        parse_latest(&self.get_public(&url)?, current)
+        parse_latest(&self.get(&url)?, current)
     }
 }
 

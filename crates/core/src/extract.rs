@@ -21,7 +21,7 @@ pub fn extract(archive: &Path, url_path: &str, into: &Path) -> Result<(), CoreEr
             .arg(archive)
             .arg(into))
     } else if lower.ends_with(".tar.gz") || lower.ends_with(".tgz") {
-        run(Command::new("tar")
+        run(Command::new("/usr/bin/tar")
             .arg("-C")
             .arg(into)
             .arg("-xf")
@@ -49,12 +49,19 @@ fn run(cmd: &mut Command) -> Result<(), CoreError> {
 
 /// A tarball that contains exactly one top-level directory is flattened so
 /// the game sits directly in the destination, matching what the zips do.
+///
+/// `file_type`, not `is_dir`: a lone symlink to somewhere else would otherwise
+/// be walked as the wrapper and have that directory's contents moved out of it.
 fn flatten_single_directory(into: &Path) -> Result<(), CoreError> {
     let entries: Vec<_> = std::fs::read_dir(into)
         .map_err(|e| CoreError::Io(e.to_string()))?
         .flatten()
         .collect();
-    if entries.len() != 1 || !entries[0].path().is_dir() {
+    let is_real_dir = entries
+        .first()
+        .and_then(|e| e.file_type().ok())
+        .is_some_and(|t| t.is_dir());
+    if entries.len() != 1 || !is_real_dir {
         return Ok(());
     }
     let wrapper = entries[0].path();
@@ -132,6 +139,37 @@ mod tests {
         extract(&tgz, "/downloads/OpenRCT2-linux.tar.gz", &out).unwrap();
         assert!(out.join("openrct2").exists(), "found {:?}", walk(&out));
         assert!(!out.join("OpenRCT2-1.0").exists());
+    }
+
+    #[test]
+    fn a_lone_symlink_is_not_walked_as_the_wrapper_directory() {
+        let d = scratch("symlink");
+        let victim = d.join("victim");
+        std::fs::create_dir_all(&victim).unwrap();
+        std::fs::write(victim.join("important.txt"), b"keep").unwrap();
+
+        let build = d.join("build");
+        std::fs::create_dir_all(&build).unwrap();
+        std::os::unix::fs::symlink(&victim, build.join("evil")).unwrap();
+
+        let tgz = d.join("archive.tar.gz");
+        let status = Command::new("/usr/bin/tar")
+            .arg("-czf")
+            .arg(&tgz)
+            .arg("-C")
+            .arg(&build)
+            .arg("evil")
+            .status()
+            .unwrap();
+        assert!(status.success());
+
+        let out = d.join("out");
+        extract(&tgz, "/downloads/thing.tar.gz", &out).unwrap();
+        assert!(
+            victim.join("important.txt").exists(),
+            "the symlink's target was emptied"
+        );
+        assert!(!out.join("important.txt").exists());
     }
 
     #[test]

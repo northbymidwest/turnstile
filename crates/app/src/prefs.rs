@@ -162,13 +162,13 @@ impl Prefs {
             .map(std::path::PathBuf::from)
     }
 
-    pub fn save(&self, pref: Pref, game: GameId) {
+    pub fn save(&self, pref: Pref) {
         match pref {
             Pref::CheckForUpdates(v) => self.set_bool(KEY_CHECK_FOR_UPDATES, v),
             Pref::ShowDevelop(v) => self.set_bool(KEY_SHOW_DEVELOP, v),
             Pref::MultiVersion(v) => self.set_bool(KEY_MULTI_VERSION, v),
             Pref::SelectedGame(v) => self.set_string(KEY_SELECTED_GAME, v.key()),
-            Pref::AutoUpdate(v) => self.set_bool(&auto_update_key(game.key()), v),
+            Pref::AutoUpdate(game, v) => self.set_bool(&auto_update_key(game.key()), v),
             Pref::InstallRoot(Some(path)) => self.set_string(KEY_INSTALL_ROOT, &path),
             // Removed rather than stored empty, so the default is the absence
             // of an answer and not a second spelling of one.
@@ -252,7 +252,7 @@ mod tests {
     fn save_and_selected_game_round_trip_through_the_stable_key_not_an_index() {
         let p = Prefs::with_suite("TurnstileTestSelectedGameRoundTrip");
         p.remove_all();
-        p.save(Pref::SelectedGame(GameId::OpenLoco), GameId::OpenLoco);
+        p.save(Pref::SelectedGame(GameId::OpenLoco));
         assert_eq!(p.selected_game(), GameId::OpenLoco);
         p.remove_all();
     }
@@ -261,14 +261,14 @@ mod tests {
     fn auto_update_is_saved_per_game_not_globally() {
         let p = Prefs::with_suite("TurnstileTestAutoUpdate");
         p.remove_all();
-        p.save(Pref::AutoUpdate(true), GameId::OpenRCT2);
+        p.save(Pref::AutoUpdate(GameId::OpenRCT2, true));
         assert!(p.auto_update(GameId::OpenRCT2));
         assert!(!p.auto_update(GameId::OpenLoco));
 
-        p.save(Pref::AutoUpdate(true), GameId::OpenLoco);
+        p.save(Pref::AutoUpdate(GameId::OpenLoco, true));
         assert!(p.auto_update(GameId::OpenRCT2));
         assert!(p.auto_update(GameId::OpenLoco));
-        p.save(Pref::AutoUpdate(false), GameId::OpenRCT2);
+        p.save(Pref::AutoUpdate(GameId::OpenRCT2, false));
         assert!(!p.auto_update(GameId::OpenRCT2));
         assert!(p.auto_update(GameId::OpenLoco));
         p.remove_all();
