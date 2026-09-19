@@ -190,23 +190,13 @@ fn extract_into(
         ));
     }
 
-    // One stored location can be the source for more than one file: an
-    // installer holding the same bytes twice stores them once. Keyed by
-    // location alone, the second file is silently never written.
-    let mut destinations: BTreeMap<u32, Vec<(usize, usize)>> = BTreeMap::new();
+    // Keyed by entry, not by location: an installer that holds the same bytes
+    // twice stores them once, so several entries can name one location and a
+    // location does not say which file wanted it.
+    let mut destinations: BTreeMap<usize, (usize, usize)> = BTreeMap::new();
     for (index, file) in files.iter().enumerate() {
         for (part, entry) in file.parts().iter().enumerate() {
-            let Some(location) = inno
-                .file_entries()
-                .get(*entry)
-                .map(inno::entry::File::location)
-            else {
-                continue;
-            };
-            destinations
-                .entry(location)
-                .or_default()
-                .push((index, part));
+            destinations.insert(*entry, (index, part));
         }
     }
 
@@ -214,9 +204,7 @@ fn extract_into(
     let mut written = 0_usize;
     let mut pending: BTreeMap<usize, Vec<Option<Vec<u8>>>> = BTreeMap::new();
 
-    let wanted: Vec<u32> = destinations.keys().copied().collect();
-    for result in inno.filtered_files(|entry| wanted.binary_search(&entry.location_index()).is_ok())
-    {
+    for result in inno.filtered_files(|entry| destinations.contains_key(&entry.index())) {
         if cancel.load(Ordering::Relaxed) {
             return Err(CoreError::Cancelled);
         }
@@ -225,54 +213,52 @@ fn extract_into(
             CoreError::ExtractionFailed(format!("could not read the installer: {error}"))
         })?;
 
-        let Some(targets) = destinations.get(&entry.location_index()) else {
+        let Some(&(index, part)) = destinations.get(&entry.index()) else {
             continue;
         };
 
-        for &(index, part) in targets {
-            let file = &files[index];
+        let file = &files[index];
 
-            // The overwhelming majority of files are one part, and that part is
-            // in hand: write it without ever storing it.
-            if file.parts().len() == 1 {
-                let mut out = create_file(destination, file.path())?;
-                file.assemble_into(std::slice::from_ref(&data), &mut out)
-                    .map_err(|error| {
-                        CoreError::ExtractionFailed(format!("{}: {error}", file.path()))
-                    })?;
-                written += 1;
-                #[allow(clippy::cast_precision_loss)]
-                progress(Progress {
-                    status: Status::Extracting,
-                    value: Some(written as f64 / total as f64),
-                });
-                continue;
-            }
-
-            let slots = pending
-                .entry(index)
-                .or_insert_with(|| vec![None; file.parts().len()]);
-            slots[part] = Some(data.clone());
-
-            if slots.iter().all(Option::is_some) {
-                let parts: Vec<Vec<u8>> = pending
-                    .remove(&index)
-                    .unwrap_or_default()
-                    .into_iter()
-                    .flatten()
-                    .collect();
-                let mut out = create_file(destination, file.path())?;
-                file.assemble_into(&parts, &mut out).map_err(|error| {
+        // The overwhelming majority of files are one part, and that part is
+        // in hand: write it without ever storing it.
+        if file.parts().len() == 1 {
+            let mut out = create_file(destination, file.path())?;
+            file.assemble_into(std::slice::from_ref(&data), &mut out)
+                .map_err(|error| {
                     CoreError::ExtractionFailed(format!("{}: {error}", file.path()))
                 })?;
-                written += 1;
+            written += 1;
+            #[allow(clippy::cast_precision_loss)]
+            progress(Progress {
+                status: Status::Extracting,
+                value: Some(written as f64 / total as f64),
+            });
+            continue;
+        }
 
-                #[allow(clippy::cast_precision_loss)]
-                progress(Progress {
-                    status: Status::Extracting,
-                    value: Some(written as f64 / total as f64),
-                });
-            }
+        let slots = pending
+            .entry(index)
+            .or_insert_with(|| vec![None; file.parts().len()]);
+        slots[part] = Some(data.clone());
+
+        if slots.iter().all(Option::is_some) {
+            let parts: Vec<Vec<u8>> = pending
+                .remove(&index)
+                .unwrap_or_default()
+                .into_iter()
+                .flatten()
+                .collect();
+            let mut out = create_file(destination, file.path())?;
+            file.assemble_into(&parts, &mut out).map_err(|error| {
+                CoreError::ExtractionFailed(format!("{}: {error}", file.path()))
+            })?;
+            written += 1;
+
+            #[allow(clippy::cast_precision_loss)]
+            progress(Progress {
+                status: Status::Extracting,
+                value: Some(written as f64 / total as f64),
+            });
         }
     }
 
