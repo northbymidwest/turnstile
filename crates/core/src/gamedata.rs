@@ -11,7 +11,6 @@
 //! `inno` crate does that reassembly; this module decides which of those files
 //! belong in a game directory and puts them there.
 
-use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -179,93 +178,40 @@ fn extract_into(
 ) -> Result<(), CoreError> {
     let mut inno = open(installer)?;
 
-    let files: Vec<_> = inno::gog::files(inno.file_entries())
-        .into_iter()
-        .filter(is_install_file)
-        .collect();
+    // `gog_files` chooses whole files, so the parts they are split across stay
+    // the library's business: it reads them in order and writes them out, and
+    // nothing here holds a file or a part.
+    let mut files = inno.gog_files(is_install_file);
 
-    if files.is_empty() {
+    let total = files.len();
+    if total == 0 {
         return Err(CoreError::ExtractionFailed(
             "the installer holds no game files".into(),
         ));
     }
 
-    // Keyed by entry, not by location: an installer that holds the same bytes
-    // twice stores them once, so several entries can name one location and a
-    // location does not say which file wanted it.
-    let mut destinations: BTreeMap<usize, (usize, usize)> = BTreeMap::new();
-    for (index, file) in files.iter().enumerate() {
-        for (part, entry) in file.parts().iter().enumerate() {
-            destinations.insert(*entry, (index, part));
-        }
-    }
-
-    let total = files.len();
     let mut written = 0_usize;
-    let mut pending: BTreeMap<usize, Vec<Option<Vec<u8>>>> = BTreeMap::new();
 
-    for result in inno.filtered_files(|entry| destinations.contains_key(&entry.index())) {
+    while let Some(file) = files.next() {
         if cancel.load(Ordering::Relaxed) {
             return Err(CoreError::Cancelled);
         }
 
-        let (entry, data) = result.map_err(|error| {
-            CoreError::ExtractionFailed(format!("could not read the installer: {error}"))
-        })?;
+        // Taken before the write, which needs `files` back.
+        let path = file.path().to_owned();
 
-        let Some(&(index, part)) = destinations.get(&entry.index()) else {
-            continue;
-        };
+        let mut out = create_file(destination, &path)?;
+        files
+            .write_into(&mut out)
+            .map_err(|error| CoreError::ExtractionFailed(format!("{path}: {error}")))?;
 
-        let file = &files[index];
+        written += 1;
 
-        // The overwhelming majority of files are one part, and that part is
-        // in hand: write it without ever storing it.
-        if file.parts().len() == 1 {
-            let mut out = create_file(destination, file.path())?;
-            file.assemble_into(std::slice::from_ref(&data), &mut out)
-                .map_err(|error| {
-                    CoreError::ExtractionFailed(format!("{}: {error}", file.path()))
-                })?;
-            written += 1;
-            #[allow(clippy::cast_precision_loss)]
-            progress(Progress {
-                status: Status::Extracting,
-                value: Some(written as f64 / total as f64),
-            });
-            continue;
-        }
-
-        let slots = pending
-            .entry(index)
-            .or_insert_with(|| vec![None; file.parts().len()]);
-        slots[part] = Some(data.clone());
-
-        if slots.iter().all(Option::is_some) {
-            let parts: Vec<Vec<u8>> = pending
-                .remove(&index)
-                .unwrap_or_default()
-                .into_iter()
-                .flatten()
-                .collect();
-            let mut out = create_file(destination, file.path())?;
-            file.assemble_into(&parts, &mut out).map_err(|error| {
-                CoreError::ExtractionFailed(format!("{}: {error}", file.path()))
-            })?;
-            written += 1;
-
-            #[allow(clippy::cast_precision_loss)]
-            progress(Progress {
-                status: Status::Extracting,
-                value: Some(written as f64 / total as f64),
-            });
-        }
-    }
-
-    if written < total {
-        return Err(CoreError::ExtractionFailed(format!(
-            "only {written} of {total} files could be read out of the installer"
-        )));
+        #[allow(clippy::cast_precision_loss)]
+        progress(Progress {
+            status: Status::Extracting,
+            value: Some(written as f64 / total as f64),
+        });
     }
 
     Ok(())
