@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.4.0 - 2026-09-21
+
+### Fixed
+
+- Clicking Play a second time started a second copy of the game.
+- A version popup could name a build that was no longer in the list, and act on
+  it.
+- Installing game data could not be cancelled once it had started, and anything
+  asked for afterwards waited behind it.
+- An install that failed before the installer was identified reported the
+  failure against the wrong game.
+- Refusing to remove a version because something else was running said nothing,
+  so the confirmation looked as though it had been acted on.
+- Turning off "Keep multiple versions installed" while the link to the active
+  build was broken failed with a bare file error and left the setting where it
+  was.
+- Unpacking a download whose single top-level entry was a symbolic link moved
+  the contents of whatever it pointed at, rather than the archive's own.
+- A crash while writing a game's configuration could leave it naming a directory
+  that was never written.
+
+### Changed
+
+- Installing game data holds a few megabytes rather than most of the installer.
+  RollerCoaster Tycoon 2 peaked at about 960 MB in 0.3.0 and now peaks at about
+  9 MB, so installing on a machine that was short of memory no longer competes
+  with everything else running.
+- The menu bar is translated. It was the last English left in the application,
+  and is now in all nine languages Turnstile ships.
+- Two copies of Turnstile can no longer be inside the same installed-games
+  directory at once. One waits rather than both running the same repair, and a
+  copy that is killed partway leaves nothing behind that blocks the next.
+- Release builds are smaller and faster, from link-time optimisation and
+  stripping.
+
 ## 0.3.0 - 2026-09-18
 
 ### Added
