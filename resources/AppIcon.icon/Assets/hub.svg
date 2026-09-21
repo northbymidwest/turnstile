@@ -23,6 +23,6 @@
        layers panel, not painter's order. Listing the hub last puts it behind
        the spokes, whose ends then cut across the ring and break the circle. -->
   <path fill="#ffffff" fill-rule="evenodd"
-        d="M413,553 a99,99 0 1,0 198,0 a99,99 0 1,0 -198,0 Z
-           M475,553 a37,37 0 1,0 74,0 a37,37 0 1,0 -74,0 Z"/>
+        d="M413,512 a99,99 0 1,0 198,0 a99,99 0 1,0 -198,0 Z
+           M475,512 a37,37 0 1,0 74,0 a37,37 0 1,0 -74,0 Z"/>
 </svg>
