@@ -5,10 +5,9 @@
 # with it. Every action is pinned to a commit, with the tag in a comment, so
 # this is also the only thing that ever moves one of those pins.
 #
-# `dtolnay/rust-toolchain` is pinned like the others and chooses the compiler
-# through its `toolchain:` input, never through the ref, so a bump here moves
-# the action and not the toolchain. The `msrv` job reads its version from
-# `Cargo.toml`, which is not a dependency this file can see.
+# The compiler is installed with plain `rustup`, not an action, so nothing
+# here moves it. The `msrv` job reads its version from `Cargo.toml`,
+# which is not a dependency this file can see.
 #
 # `northbymidwest/gh-actions` is this owner's own repository and carries the
 # release machinery. It is bumped here like any other action, which is the
